@@ -1,0 +1,9 @@
+{
+  "short_name": "Tailorix AI",
+  "name": "Tailorix AI - Studio Canvas & Deconstruct",
+  "icons": [],
+  "start_url": "/",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "display": "standalone"
+}

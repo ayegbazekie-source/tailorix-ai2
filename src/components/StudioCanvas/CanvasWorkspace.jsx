@@ -1,67 +1,70 @@
-import React, { useEffect, useRef } from 'react';
-import { fabric } from 'fabric';
+import React, { useEffect, useRef, useState } from 'react';
 import { useCanvas } from '../../context/CanvasContext';
 
 export default function CanvasWorkspace() {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
+  const [isReady, setIsReady] = useState(false);
+
   const { 
     activeTool, 
     brushColor, 
     brushWidth, 
-    cutSheetColor, 
-    foldStyle,
-    layers 
+    cutSheetColor 
   } = useCanvas();
 
   useEffect(() => {
-    // Initialize Fabric Canvas
-    const canvas = new fabric.Canvas(canvasRef.current, {
-      width: window.innerWidth,
-      height: window.innerHeight - 120,
-      backgroundColor: cutSheetColor,
-      isDrawingMode: activeTool === 'chalk',
+    let canvasInstance = null;
+
+    // Dynamically import fabric to safely support Vite production builds
+    import('fabric').then((fabricModule) => {
+      const Fabric = fabricModule.fabric || fabricModule;
+      if (!canvasRef.current || !Fabric?.Canvas) return;
+
+      canvasInstance = new Fabric.Canvas(canvasRef.current, {
+        width: window.innerWidth,
+        height: window.innerHeight - 120,
+        backgroundColor: cutSheetColor || '#1E293B',
+        isDrawingMode: activeTool === 'chalk',
+      });
+
+      fabricCanvasRef.current = canvasInstance;
+      setIsReady(true);
+
+      if (canvasInstance.freeDrawingBrush) {
+        canvasInstance.freeDrawingBrush.color = brushColor || '#FFFFFF';
+        canvasInstance.freeDrawingBrush.width = brushWidth || 3;
+      }
+    }).catch((err) => {
+      console.warn('Fabric.js loading issue:', err);
     });
 
-    fabricCanvasRef.current = canvas;
-
-    // Set brush options
-    if (canvas.freeDrawingBrush) {
-      canvas.freeDrawingBrush.color = brushColor;
-      canvas.freeDrawingBrush.width = brushWidth;
-    }
-
     const handleResize = () => {
-      canvas.setWidth(window.innerWidth);
-      canvas.setHeight(window.innerHeight - 120);
-      canvas.renderAll();
+      if (fabricCanvasRef.current) {
+        fabricCanvasRef.current.setWidth(window.innerWidth);
+        fabricCanvasRef.current.setHeight(window.innerHeight - 120);
+        fabricCanvasRef.current.renderAll();
+      }
     };
 
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      canvas.dispose();
+      if (canvasInstance) {
+        canvasInstance.dispose();
+      }
     };
   }, []);
 
-  // Update canvas state on tool/color changes
-  useEffect(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    canvas.isDrawingMode = activeTool === 'chalk';
-    if (canvas.freeDrawingBrush) {
-      canvas.freeDrawingBrush.color = brushColor;
-      canvas.freeDrawingBrush.width = brushWidth;
-    }
-
-    canvas.setBackgroundColor(cutSheetColor, canvas.renderAll.bind(canvas));
-  }, [activeTool, brushColor, brushWidth, cutSheetColor]);
-
   return (
-    <div className="relative w-full h-[calc(100vh-80px)] bg-slate-950 overflow-hidden select-none">
+    <div className="relative w-full h-[calc(100vh-80px)] bg-slate-950 overflow-hidden select-none flex items-center justify-center">
       <canvas ref={canvasRef} className="w-full h-full touch-none" />
+      {!isReady && (
+        <div className="absolute text-slate-500 text-sm">
+          Loading Canvas Engine...
+        </div>
+      )}
     </div>
   );
 }

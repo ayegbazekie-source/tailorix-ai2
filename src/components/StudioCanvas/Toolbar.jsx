@@ -3,7 +3,7 @@ import {
   Pencil, 
   Ruler, 
   Scissors, 
-  RulerHorizontal, 
+  MoveHorizontal, 
   Layers, 
   Sliders, 
   Maximize2, 
@@ -71,7 +71,7 @@ export default function Toolbar({ onOpenLayers, onOpenFabricSettings }) {
           }`}
           title="Straight Snap Ruler"
         >
-          <RulerHorizontal className="w-5 h-5" />
+          <MoveHorizontal className="w-5 h-5" />
         </button>
 
         <button

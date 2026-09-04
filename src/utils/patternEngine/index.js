@@ -4,8 +4,10 @@ import { draftSkirtPattern } from './skirtEngine';
 import { draftJacketPattern } from './jacketEngine';
 import { draftGownPattern } from './gownEngine';
 
-export function generatePatternCAD(category, measurements, parameters) {
-  switch (category.toLowerCase()) {
+export function generatePatternCAD(category = 'trouser', measurements = {}, parameters = {}) {
+  const cat = category.toLowerCase();
+
+  switch (cat) {
     case 'trouser':
     case 'trousers':
     case 'shorts':
@@ -14,7 +16,6 @@ export function generatePatternCAD(category, measurements, parameters) {
     case 'shirt':
     case 'blouse':
     case 'shirts':
-    case 'blouses':
       return draftShirtPattern(measurements, parameters);
 
     case 'skirt':
@@ -31,6 +32,6 @@ export function generatePatternCAD(category, measurements, parameters) {
       return draftGownPattern(measurements, parameters);
 
     default:
-      throw new Error(`Unsupported garment category: ${category}`);
+      return draftTrouserPattern(measurements, parameters);
   }
 }

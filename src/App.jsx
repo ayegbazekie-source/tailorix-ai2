@@ -2,6 +2,7 @@ import React, { Component } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import StudioCanvas from './components/StudioCanvas/CanvasWorkspace';
 import Toolbar from './components/StudioCanvas/Toolbar';
+import DeconstructWorkbench from './components/Deconstruct/DeconstructWorkbench';
 import { CanvasProvider } from './context/CanvasContext';
 import { Sparkles, Layers, Layout, Settings, FolderOpen } from 'lucide-react';
 
@@ -88,13 +89,12 @@ export default function App() {
           <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-amber-500 selection:text-slate-950">
             <HeaderNav />
             <div className="flex-1 relative overflow-hidden">
-              <Toolbar />
               <Routes>
-                <Route path="/" element={<StudioCanvas />} />
-                <Route path="/deconstruct" element={<div className="p-8 text-center text-slate-400">Deconstruction Workbench Engine (Coming Next)</div>} />
+                <Route path="/" element={<><Toolbar /><StudioCanvas /></>} />
+                <Route path="/deconstruct" element={<DeconstructWorkbench />} />
                 <Route path="/templates" element={<div className="p-8 text-center text-slate-400">Pattern & Croqui Templates Library (Coming Next)</div>} />
                 <Route path="/projects" element={<div className="p-8 text-center text-slate-400">Saved Projects Gallery (Coming Next)</div>} />
-                <Route path="*" element={<StudioCanvas />} />
+                <Route path="*" element={<><Toolbar /><StudioCanvas /></>} />
               </Routes>
             </div>
           </div>

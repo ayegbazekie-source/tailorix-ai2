@@ -1,6 +1,7 @@
 import React from 'react';
-import { Download, FileCode, RefreshCw } from 'lucide-react';
+import { Download, FileCode, Printer, RefreshCw } from 'lucide-react';
 import { exportToSVG, exportToDXF } from '../../utils/exportUtils';
+import { generateTiledPrintPDF } from '../../utils/pdfPrintEngine';
 
 export default function CADToolbar({
   selectedCategory,
@@ -29,7 +30,7 @@ export default function CADToolbar({
         ))}
       </div>
 
-      {/* Export & Utility Actions */}
+      {/* Export & Print Actions */}
       <div className="flex items-center gap-2 w-full md:w-auto justify-end">
         <button
           onClick={resetMeasurements}
@@ -41,11 +42,19 @@ export default function CADToolbar({
         </button>
 
         <button
+          onClick={() => generateTiledPrintPDF(cadData, selectedCategory, 'A4')}
+          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-400 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all"
+        >
+          <Printer className="w-3.5 h-3.5" />
+          <span>Print Tiled</span>
+        </button>
+
+        <button
           onClick={() => exportToSVG(cadData, selectedCategory)}
           className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
         >
           <Download className="w-3.5 h-3.5 text-amber-400" />
-          <span>Export SVG</span>
+          <span>SVG</span>
         </button>
 
         <button
@@ -53,7 +62,7 @@ export default function CADToolbar({
           className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/10"
         >
           <FileCode className="w-3.5 h-3.5" />
-          <span>Export DXF</span>
+          <span>DXF</span>
         </button>
       </div>
     </div>

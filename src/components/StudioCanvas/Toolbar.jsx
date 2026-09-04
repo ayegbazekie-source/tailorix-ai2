@@ -4,21 +4,18 @@ import {
   Ruler, 
   Scissors, 
   MoveHorizontal, 
-  Layers, 
-  Sliders, 
-  Maximize2, 
-  Palette,
-  Eye,
-  EyeOff
+  Undo2, 
+  Redo2, 
+  Trash2,
+  Palette
 } from 'lucide-react';
 import { useCanvas } from '../../context/CanvasContext';
 
-export default function Toolbar({ onOpenLayers, onOpenFabricSettings }) {
+export default function Toolbar({ onUndo, onRedo, onClear }) {
   const { 
     activeTool, setActiveTool, 
     brushColor, setBrushColor, 
-    activeRulerType, setActiveRulerType,
-    infraredGuideActive, setInfraredGuideActive
+    activeRulerType, setActiveRulerType
   } = useCanvas();
 
   const colors = [
@@ -29,28 +26,30 @@ export default function Toolbar({ onOpenLayers, onOpenFabricSettings }) {
   ];
 
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-2 shadow-2xl flex items-center gap-2 max-w-[95vw] overflow-x-auto">
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-1.5 shadow-2xl flex items-center gap-2 max-w-[95vw] overflow-x-auto ring-1 ring-white/5">
       
-      {/* Marking Tools */}
-      <div className="flex items-center gap-1 border-r border-slate-800 pr-2">
+      {/* Drawing Tool & Color Selection */}
+      <div className="flex items-center gap-1.5 border-r border-slate-800/80 pr-2">
         <button
           onClick={() => setActiveTool('chalk')}
           className={`p-2 rounded-xl transition-all ${
-            activeTool === 'chalk' ? 'bg-amber-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            activeTool === 'chalk' ? 'bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-400/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
-          title="Tailor Chalk (Freehand Drawing)"
+          title="Tailor Chalk Freehand"
         >
-          <Pencil className="w-5 h-5" />
+          <Pencil className="w-4 h-4" />
         </button>
 
-        {/* Color Picker */}
-        <div className="flex items-center gap-1 ml-1">
+        <div className="flex items-center gap-1 ml-0.5">
           {colors.map((c) => (
             <button
               key={c.hex}
-              onClick={() => setBrushColor(c.hex)}
-              className={`w-5 h-5 rounded-full border border-slate-700 transition-transform ${
-                brushColor === c.hex ? 'scale-125 ring-2 ring-amber-400' : 'hover:scale-110'
+              onClick={() => {
+                setBrushColor(c.hex);
+                setActiveTool('chalk');
+              }}
+              className={`w-4 h-4 rounded-full border border-slate-700/80 transition-all ${
+                brushColor === c.hex ? 'scale-125 ring-2 ring-amber-400 ring-offset-1 ring-offset-slate-900' : 'hover:scale-110'
               }`}
               style={{ backgroundColor: c.hex }}
               title={c.name}
@@ -59,64 +58,61 @@ export default function Toolbar({ onOpenLayers, onOpenFabricSettings }) {
         </div>
       </div>
 
-      {/* Snap Rulers */}
-      <div className="flex items-center gap-1 border-r border-slate-800 pr-2">
+      {/* Rulers */}
+      <div className="flex items-center gap-1 border-r border-slate-800/80 pr-2">
         <button
           onClick={() => {
-            setActiveTool('straight_ruler');
-            setActiveRulerType(activeRulerType === 'straight' ? null : 'straight');
+            const nextRuler = activeRulerType === 'straight' ? null : 'straight';
+            setActiveRulerType(nextRuler);
+            setActiveTool(nextRuler ? 'straight_ruler' : 'chalk');
           }}
           className={`p-2 rounded-xl transition-all ${
-            activeRulerType === 'straight' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            activeRulerType === 'straight' ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
-          title="Straight Snap Ruler"
+          title="Straight Ruler Guide"
         >
-          <MoveHorizontal className="w-5 h-5" />
+          <MoveHorizontal className="w-4 h-4" />
         </button>
 
         <button
           onClick={() => {
-            setActiveTool('french_curve');
-            setActiveRulerType(activeRulerType === 'french_curve' ? null : 'french_curve');
+            const nextRuler = activeRulerType === 'french_curve' ? null : 'french_curve';
+            setActiveRulerType(nextRuler);
+            setActiveTool(nextRuler ? 'french_curve' : 'chalk');
           }}
           className={`p-2 rounded-xl transition-all ${
-            activeRulerType === 'french_curve' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            activeRulerType === 'french_curve' ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
-          title="French Curve (Armhole & Neckline)"
+          title="French Curve"
         >
-          <Ruler className="w-5 h-5 rotate-45" />
+          <Ruler className="w-4 h-4 rotate-45" />
         </button>
       </div>
 
-      {/* Shears with Infrared Guide */}
-      <div className="flex items-center gap-1 border-r border-slate-800 pr-2">
-        <button
-          onClick={() => setActiveTool('shears')}
-          className={`p-2 rounded-xl transition-all ${
-            activeTool === 'shears' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-          }`}
-          title="Digital Shears (Infrared Cut Guide)"
-        >
-          <Scissors className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Layers & Fabric Setup Triggers */}
+      {/* History Controls */}
       <div className="flex items-center gap-1">
         <button
-          onClick={onOpenLayers}
-          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
-          title="Layers Stack"
+          onClick={onUndo}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-xl transition-all"
+          title="Undo (Ctrl+Z)"
         >
-          <Layers className="w-5 h-5" />
+          <Undo2 className="w-4 h-4" />
         </button>
 
         <button
-          onClick={onOpenFabricSettings}
-          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
-          title="Cut-Sheet & Fabric Fold Settings"
+          onClick={onRedo}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-xl transition-all"
+          title="Redo (Ctrl+Y)"
         >
-          <Sliders className="w-5 h-5" />
+          <Redo2 className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={onClear}
+          className="p-2 text-rose-400/80 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+          title="Clear Canvas"
+        >
+          <Trash2 className="w-4 h-4" />
         </button>
       </div>
     </div>

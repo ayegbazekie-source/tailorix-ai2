@@ -4,6 +4,7 @@ import CADCanvas from './CADCanvas';
 import MeasurementPanel from './MeasurementPanel';
 import PatternPieceList from './PatternPieceList';
 import CADToolbar from './CADToolbar';
+import FabricMarkerPanel from './FabricMarkerPanel';
 import { generatePatternCAD } from '../../utils/patternEngine';
 import { Layers, RotateCcw, Eye, Grid } from 'lucide-react';
 
@@ -174,7 +175,8 @@ export default function DeconstructWorkbench() {
             <div className="lg:col-span-8 flex flex-col gap-4">
               <CADCanvas 
                 cadData={cadData} 
-                selectedPanels={selectedPanels} 
+                selectedPanels={selectedPanels}
+                seamAllowance={parameters.seamAllowance || 0.5}
               />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -192,6 +194,9 @@ export default function DeconstructWorkbench() {
                   togglePanel={togglePanel}
                 />
               </div>
+
+              {/* Fabric Yield & Production Marker Layout */}
+              <FabricMarkerPanel pieces={cadData.pieces} />
             </div>
 
           </div>
@@ -201,4 +206,3 @@ export default function DeconstructWorkbench() {
     </div>
   );
 }
-

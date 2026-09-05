@@ -7,6 +7,8 @@ import CADToolbar from './CADToolbar';
 import FabricMarkerPanel from './FabricMarkerPanel';
 import Garment3DViewer from './Garment3DViewer';
 import PatternGradingPanel from './PatternGradingPanel';
+import TemplateLibraryDrawer from './TemplateLibraryDrawer';
+import PrecisionToolsOverlay from './PrecisionToolsOverlay';
 import { generatePatternCAD } from '../../utils/patternEngine';
 import { generateNestedGrading } from '../../utils/patternEngine/gradingEngine';
 import { Layers, RotateCcw, Eye, Grid } from 'lucide-react';
@@ -22,6 +24,13 @@ export default function DeconstructWorkbench() {
 
   // Phase 6 Grading State
   const [activeSizes, setActiveSizes] = useState(['M']);
+
+  // Template & Croqui State
+  const [activeCroqui, setActiveCroqui] = useState(null);
+
+  // Precision Tools State (Digital Tape & Notch Markers)
+  const [tapePoints, setTapePoints] = useState([]);
+  const [notchType, setNotchType] = useState('v_notch');
 
   // Master Measurement State
   const initialMeasurements = {
@@ -68,7 +77,7 @@ export default function DeconstructWorkbench() {
     try {
       const data = generatePatternCAD(selectedCategory, measurements, parameters);
       
-      // Apply any interactive point dragging overrides
+      // Apply interactive point dragging overrides
       if (Object.keys(customNodeOverrides).length > 0) {
         data.pieces = data.pieces.map((piece) => {
           if (customNodeOverrides[piece.id]) {
@@ -117,6 +126,8 @@ export default function DeconstructWorkbench() {
     setMeasurements(initialMeasurements);
     setSelectedPanels([0, 1]);
     setCustomNodeOverrides({});
+    setTapePoints([]);
+    setActiveCroqui(null);
   };
 
   const handleNodeUpdate = (pieceId, pointIndex, coords) => {
@@ -127,6 +138,19 @@ export default function DeconstructWorkbench() {
         [pointIndex]: coords,
       },
     }));
+  };
+
+  // Preset Handlers
+  const handleApplySloper = (sloper) => {
+    if (sloper.category) setSelectedCategory(sloper.category);
+    if (sloper.measurements) {
+      setMeasurements((prev) => ({ ...prev, ...sloper.measurements }));
+    }
+    setCustomNodeOverrides({});
+  };
+
+  const handleSelectCroqui = (croqui) => {
+    setActiveCroqui((prev) => (prev?.id === croqui.id ? null : croqui));
   };
 
   return (
@@ -229,15 +253,34 @@ export default function DeconstructWorkbench() {
             {/* Right Column: Interactive CAD Viewport & Parameters */}
             <div className="lg:col-span-8 flex flex-col gap-4">
               
-              {/* Phase 4: Interactive Canvas Node Manipulator */}
+              {/* Precision Tools Toolbar */}
+              <PrecisionToolsOverlay 
+                tapePoints={tapePoints}
+                setTapePoints={setTapePoints}
+                notchType={notchType}
+                setNotchType={setNotchType}
+              />
+
+              {/* Interactive Canvas Node Manipulator */}
               <CADCanvasInteractive 
                 cadData={baseCadData} 
                 selectedPanels={selectedPanels} 
                 seamAllowance={parameters.seamAllowance || 0.5}
                 onNodeUpdate={handleNodeUpdate}
+                activeCroqui={activeCroqui}
+                tapePoints={tapePoints}
+                setTapePoints={setTapePoints}
+                notchType={notchType}
               />
 
-              {/* Phase 6: Multi-Size Pattern Grading Matrix Controls */}
+              {/* Master Slopers & Croqui Preset Library */}
+              <TemplateLibraryDrawer 
+                onSelectCroqui={handleSelectCroqui}
+                onApplySloper={handleApplySloper}
+                activeCroquiId={activeCroqui?.id}
+              />
+
+              {/* Multi-Size Pattern Grading Matrix Controls */}
               <PatternGradingPanel 
                 activeSizes={activeSizes}
                 setActiveSizes={setActiveSizes}
@@ -259,7 +302,7 @@ export default function DeconstructWorkbench() {
                 />
               </div>
 
-              {/* Phase 3: Fabric Marker & Yield Estimation */}
+              {/* Fabric Marker & Yield Estimation */}
               <FabricMarkerPanel pieces={baseCadData.pieces} />
 
             </div>
@@ -270,4 +313,4 @@ export default function DeconstructWorkbench() {
       </div>
     </div>
   );
-}
+              }

@@ -1,0 +1,6 @@
+{
+  "name": "Tailorix AI",
+  "description": "Parametric fashion CAD drafting workbench, garment pattern deconstruction, studio canvas, and master tailor suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

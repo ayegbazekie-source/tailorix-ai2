@@ -10,12 +10,9 @@ export default function StudioCanvasPage() {
   return (
     <CanvasProvider>
       <div className="relative w-full h-full bg-slate-950 overflow-hidden">
-        <Toolbar 
+        <CanvasWorkspace 
           onOpenLayers={() => setIsLayerPanelOpen(!isLayerPanelOpen)}
-          onOpenFabricSettings={() => {}}
         />
-        
-        <CanvasWorkspace />
 
         <LayerPanel 
           isOpen={isLayerPanelOpen} 

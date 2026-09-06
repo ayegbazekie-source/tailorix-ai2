@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useCanvas } from '../../context/CanvasContext';
 import Toolbar from './Toolbar';
 
-export default function CanvasWorkspace() {
+export default function CanvasWorkspace({ onOpenLayers }) {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
@@ -135,7 +135,7 @@ export default function CanvasWorkspace() {
 
   return (
     <div className="relative w-full h-[calc(100vh-64px)] bg-slate-950 overflow-hidden select-none flex items-center justify-center">
-      <Toolbar onUndo={handleUndo} onRedo={handleRedo} onClear={handleClear} />
+      <Toolbar onUndo={handleUndo} onRedo={handleRedo} onClear={handleClear} onOpenLayers={onOpenLayers} />
       <canvas ref={canvasRef} className="w-full h-full touch-none" />
       {!isReady && (
         <div className="absolute text-slate-400 text-xs font-medium tracking-wide bg-slate-900/80 px-4 py-2 rounded-xl border border-slate-800/80 shadow-xl">

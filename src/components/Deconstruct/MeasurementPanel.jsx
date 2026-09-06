@@ -10,6 +10,8 @@ export default function MeasurementPanel({ category, measurements, setMeasuremen
     setParameters((prev) => ({ ...prev, [field]: value }));
   };
 
+  const cat = (category || 'trouser').toLowerCase();
+
   return (
     <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 font-mono text-slate-100">
       <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-800">
@@ -20,7 +22,7 @@ export default function MeasurementPanel({ category, measurements, setMeasuremen
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {(category === 'trouser' || category === 'shorts') && (
+        {(cat === 'trouser' || cat === 'shorts') && (
           <>
             <div>
               <label className="text-[10px] text-slate-400 block mb-1">WAIST</label>
@@ -49,7 +51,7 @@ export default function MeasurementPanel({ category, measurements, setMeasuremen
           </>
         )}
 
-        {category === 'shirt' && (
+        {(cat === 'shirt' || cat === 'blouse') && (
           <>
             <div>
               <label className="text-[10px] text-slate-400 block mb-1">CHEST / BUST</label>
@@ -66,6 +68,77 @@ export default function MeasurementPanel({ category, measurements, setMeasuremen
             <div>
               <label className="text-[10px] text-slate-400 block mb-1">SLEEVE LENGTH</label>
               <input type="number" step="0.5" value={measurements.sleeveLength || 24} onChange={(e) => handleChange('sleeveLength', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">NECK</label>
+              <input type="number" step="0.25" value={measurements.neckCircumference || 15.5} onChange={(e) => handleChange('neckCircumference', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+          </>
+        )}
+
+        {cat === 'skirt' && (
+          <>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">WAIST</label>
+              <input type="number" step="0.5" value={measurements.waist || 28} onChange={(e) => handleChange('waist', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">HIP</label>
+              <input type="number" step="0.5" value={measurements.hip || 38} onChange={(e) => handleChange('hip', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">HIP DEPTH</label>
+              <input type="number" step="0.25" value={measurements.hipDepth || 8} onChange={(e) => handleChange('hipDepth', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">SKIRT LENGTH</label>
+              <input type="number" step="0.5" value={measurements.skirtLength || 26} onChange={(e) => handleChange('skirtLength', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+          </>
+        )}
+
+        {cat === 'jacket' && (
+          <>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">CHEST</label>
+              <input type="number" step="0.5" value={measurements.chest || 40} onChange={(e) => handleChange('chest', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">SHOULDER</label>
+              <input type="number" step="0.5" value={measurements.shoulderWidth || 18} onChange={(e) => handleChange('shoulderWidth', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">JACKET LENGTH</label>
+              <input type="number" step="0.5" value={measurements.jacketLength || 30} onChange={(e) => handleChange('jacketLength', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">SLEEVE LENGTH</label>
+              <input type="number" step="0.5" value={measurements.sleeveLength || 25} onChange={(e) => handleChange('sleeveLength', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+          </>
+        )}
+
+        {(cat === 'gown' || cat === 'dress') && (
+          <>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">BUST</label>
+              <input type="number" step="0.5" value={measurements.bust || 36} onChange={(e) => handleChange('bust', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">WAIST</label>
+              <input type="number" step="0.5" value={measurements.waist || 28} onChange={(e) => handleChange('waist', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">HIP</label>
+              <input type="number" step="0.5" value={measurements.hip || 38} onChange={(e) => handleChange('hip', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">BODICE LENGTH</label>
+              <input type="number" step="0.5" value={measurements.shoulderToWaist || 16.5} onChange={(e) => handleChange('shoulderToWaist', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">FULL GOWN LENGTH</label>
+              <input type="number" step="0.5" value={measurements.fullGownLength || 58} onChange={(e) => handleChange('fullGownLength', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-amber-500 outline-none" />
             </div>
           </>
         )}

@@ -7,11 +7,12 @@ import {
   Undo2, 
   Redo2, 
   Trash2,
-  Palette
+  Palette,
+  Layers
 } from 'lucide-react';
 import { useCanvas } from '../../context/CanvasContext';
 
-export default function Toolbar({ onUndo, onRedo, onClear }) {
+export default function Toolbar({ onUndo, onRedo, onClear, onOpenLayers }) {
   const { 
     activeTool, setActiveTool, 
     brushColor, setBrushColor, 
@@ -90,7 +91,7 @@ export default function Toolbar({ onUndo, onRedo, onClear }) {
       </div>
 
       {/* History Controls */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 border-r border-slate-800/80 pr-2">
         <button
           onClick={onUndo}
           className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-xl transition-all"
@@ -115,6 +116,18 @@ export default function Toolbar({ onUndo, onRedo, onClear }) {
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Layer Panel Trigger */}
+      {onOpenLayers && (
+        <button
+          onClick={onOpenLayers}
+          className="p-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800/60 rounded-xl transition-all flex items-center gap-1 text-xs"
+          title="Layers"
+        >
+          <Layers className="w-4 h-4" />
+          <span className="hidden sm:inline font-mono">Layers</span>
+        </button>
+      )}
     </div>
   );
 }

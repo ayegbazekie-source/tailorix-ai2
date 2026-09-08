@@ -5,19 +5,18 @@
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Scissors, User, ScanLine, Palette, Bot, Users, BookOpen, Folder } from 'lucide-react';
+import { Scissors, User, ScanLine, Palette, Bot, Users, BookOpen, Folder, Sliders } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Navbar() {
   const { isSubscribed } = useAuth();
 
   const navLinks = [
-    { to: '/deconstruct', label: 'CAD Workbench', icon: ScanLine },
-    { to: '/studio', label: 'Studio Canvas', icon: Palette },
+    { to: '/deconstruct', label: 'Deconstruct', icon: ScanLine },
+    { to: '/studio', label: 'SketchBook CAD', icon: Palette },
     { to: '/templates', label: 'Templates', icon: BookOpen },
     { to: '/projects', label: 'Projects', icon: Folder },
     { to: '/tutor', label: 'Master Tailor AI', icon: Bot },
-    { to: '/community', label: 'Community', icon: Users },
   ];
 
   return (

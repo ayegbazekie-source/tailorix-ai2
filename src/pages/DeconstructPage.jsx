@@ -1,15 +1,16 @@
 /**
- * TAILORIX AI — MASTER GARMENT CAD & DECONSTRUCT PAGE
- * Direct entry point to the unified authoritative apparel workbench.
+ * TAILORIX AI — GARMENT DECONSTRUCT PAGE
+ * AI-powered reverse-engineering and pattern breakdown pipeline.
+ * 4-Step Pipeline: Photo Upload -> Technical Analysis -> Pattern Blueprint Pieces -> Export to Studio Canvas.
  */
 
 import React from 'react';
-import DeconstructWorkbench from '../components/Deconstruct/DeconstructWorkbench';
+import GarmentDeconstructPipeline from '../components/Deconstruct/GarmentDeconstructPipeline';
 
 export default function DeconstructPage() {
   return (
-    <div className="w-full h-full bg-[#f8fafc] text-slate-900">
-      <DeconstructWorkbench />
+    <div className="w-full h-full bg-[#101112] text-[#EDEDF0]">
+      <GarmentDeconstructPipeline />
     </div>
   );
 }

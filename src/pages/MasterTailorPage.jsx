@@ -1,5 +1,11 @@
+/**
+ * TAILORIX AI — MASTER TAILOR TECHNICAL ASSISTANT
+ * 30-Year Savile Row & Haute Couture Atelier AI Advisor.
+ * Dark graphite interface with champagne accents.
+ */
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, Sparkles, Scissors, CornerDownLeft, RefreshCw, BookOpen, Lightbulb, Check, Copy } from 'lucide-react';
+import { Bot, Send, Sparkles, Scissors, RefreshCw, Lightbulb, Check, Copy } from 'lucide-react';
 
 const KNOWLEDGE_BASE = {
   dart: {
@@ -122,7 +128,7 @@ Regarding "${query}":
         },
       ]);
       setIsTyping(false);
-    }, 700);
+    }, 600);
   };
 
   const copyToClipboard = (text, id) => {
@@ -132,22 +138,22 @@ Regarding "${query}":
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto flex flex-col h-[calc(100vh-64px)] font-mono">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto flex flex-col h-[calc(100vh-52px)] font-sans select-none">
       {/* Header */}
-      <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
+      <div className="mb-4 flex items-center justify-between border-b border-[#222427] pb-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+          <div className="w-10 h-10 rounded-xl bg-[#C5A059]/15 border border-[#C5A059]/30 flex items-center justify-center text-[#E5C07B]">
             <Bot className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-              30-Year Master Tailor Technical Assistant
-              <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-normal">
-                Active Atelier
+            <h1 className="text-sm sm:text-base font-semibold text-[#F5F5F7] flex items-center gap-2">
+              Master Tailor AI Atelier
+              <span className="text-[10px] bg-[#C5A059]/10 text-[#E5C07B] border border-[#C5A059]/30 px-2 py-0.5 rounded-full font-medium">
+                Active
               </span>
             </h1>
-            <p className="text-xs text-slate-400">
-              Technical pattern drafting algorithms, dart engineering, fitting corrections, and garment metrics.
+            <p className="text-xs text-[#8A8B93]">
+              Bespoke pattern drafting algorithms, dart engineering, fitting corrections, and garment metrics.
             </p>
           </div>
         </div>
@@ -162,24 +168,24 @@ Regarding "${query}":
               },
             ])
           }
-          className="p-2 rounded-xl border border-slate-800 bg-slate-900 text-slate-400 hover:text-amber-400 transition-all text-xs flex items-center gap-1"
-          title="Clear Conversation"
+          className="p-2 rounded-xl border border-[#26272A] bg-[#141517] text-[#8A8B93] hover:text-[#EDEDF0] transition-all text-xs flex items-center gap-1.5"
+          title="Reset Atelier Conversation"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Reset</span>
         </button>
       </div>
 
-      {/* Suggested Chips */}
+      {/* Suggested Fast Query Chips */}
       <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span className="text-slate-500 flex items-center gap-1 shrink-0 text-[11px]">
-          <Lightbulb className="w-3.5 h-3.5 text-amber-400" /> Fast Queries:
+        <span className="text-[#8A8B93] flex items-center gap-1 shrink-0 text-[11px]">
+          <Lightbulb className="w-3.5 h-3.5 text-[#C5A059]" /> Suggested:
         </span>
         {SUGGESTIONS.map((q, idx) => (
           <button
             key={idx}
             onClick={() => handleSend(q)}
-            className="shrink-0 bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-amber-400 border border-slate-800 rounded-lg px-2.5 py-1 text-[11px] transition-all"
+            className="shrink-0 bg-[#141517] hover:bg-[#1C1E22] text-[#8A8B93] hover:text-[#EDEDF0] border border-[#26272A] hover:border-[#383A40] rounded-lg px-2.5 py-1 text-[11px] transition-all"
           >
             {q}
           </button>
@@ -187,7 +193,7 @@ Regarding "${query}":
       </div>
 
       {/* Messages Viewport */}
-      <div className="flex-1 bg-slate-900/50 rounded-2xl border border-slate-800 p-4 overflow-y-auto space-y-4">
+      <div className="flex-1 bg-[#141517] rounded-2xl border border-[#222427] p-4 overflow-y-auto space-y-4 shadow-panel">
         {messages.map((msg) => {
           const isAssistant = msg.sender === 'assistant';
           return (
@@ -196,7 +202,7 @@ Regarding "${query}":
               className={`flex gap-3 ${isAssistant ? 'justify-start' : 'justify-end'}`}
             >
               {isAssistant && (
-                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 mt-1">
+                <div className="w-8 h-8 rounded-xl bg-[#C5A059]/15 border border-[#C5A059]/30 flex items-center justify-center text-[#E5C07B] shrink-0 mt-1">
                   <Scissors className="w-4 h-4 rotate-90" />
                 </div>
               )}
@@ -204,8 +210,8 @@ Regarding "${query}":
               <div
                 className={`max-w-[85%] rounded-2xl p-4 text-xs leading-relaxed border relative group ${
                   isAssistant
-                    ? 'bg-slate-950/90 border-slate-800 text-slate-200 shadow-md'
-                    : 'bg-amber-500/15 border-amber-500/40 text-amber-100 shadow-md'
+                    ? 'bg-[#101112] border-[#25262A] text-[#EDEDF0] shadow-md'
+                    : 'bg-[#C5A059]/15 border-[#C5A059]/40 text-[#E5C07B] shadow-gold-sm'
                 }`}
               >
                 <div className="whitespace-pre-wrap">{msg.text}</div>
@@ -213,7 +219,7 @@ Regarding "${query}":
                 {isAssistant && (
                   <button
                     onClick={() => copyToClipboard(msg.text, msg.id)}
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-slate-900 border border-slate-700 rounded-md text-slate-400 hover:text-amber-400"
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-[#18191C] border border-[#2A2B30] rounded-md text-[#8A8B93] hover:text-[#EDEDF0]"
                     title="Copy Answer"
                   >
                     {copiedId === msg.id ? (
@@ -229,9 +235,9 @@ Regarding "${query}":
         })}
 
         {isTyping && (
-          <div className="flex items-center gap-2 text-xs text-amber-400 animate-pulse bg-slate-950 border border-slate-800 w-fit px-3 py-1.5 rounded-xl">
+          <div className="flex items-center gap-2 text-xs text-[#E5C07B] animate-pulse bg-[#101112] border border-[#222427] w-fit px-3 py-1.5 rounded-xl font-mono">
             <Scissors className="w-3.5 h-3.5 animate-spin" />
-            <span>Consulting Savile Row drafting records...</span>
+            <span>Consulting Savile Row tailoring records...</span>
           </div>
         )}
         <div ref={chatEndRef} />
@@ -243,19 +249,19 @@ Regarding "${query}":
           e.preventDefault();
           handleSend();
         }}
-        className="mt-3 flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-2xl p-2"
+        className="mt-3 flex items-center gap-2 bg-[#141517] border border-[#222427] rounded-2xl p-2 shadow-panel"
       >
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a technical pattern drafting, dart manipulation, or fitting question..."
-          className="flex-1 bg-transparent px-3 py-2 text-xs text-slate-100 placeholder-slate-500 outline-none"
+          className="flex-1 bg-transparent px-3 py-2 text-xs text-[#EDEDF0] placeholder-[#6A6C75] outline-none"
         />
         <button
           type="submit"
           disabled={!input.trim() || isTyping}
-          className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20"
+          className="px-4 py-2 bg-[#C5A059] hover:bg-[#D4AF37] disabled:opacity-40 text-[#101112] font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-gold-sm"
         >
           <span>Consult</span>
           <Send className="w-3.5 h-3.5" />

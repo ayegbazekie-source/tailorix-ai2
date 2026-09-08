@@ -1,12 +1,14 @@
 /**
  * TAILORIX AI — PROFESSIONAL CAD CANVAS
  * High-precision vector garment CAD drafting canvas.
- * Off-white technical paper aesthetic with accurate CTM mouse transforms,
- * interactive vertex editing, bezier curve handles, grainlines, notches, and seam offsets.
+ * Refined warm off-white technical drafting surface with accurate CTM mouse transforms,
+ * dark charcoal pattern outlines, restrained champagne gold selection highlight,
+ * subtle gray drafting grid, grainlines, notches, and floating controls.
  */
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { updatePiecePoint } from '../../models/patternGeometry';
+import { ZoomIn, ZoomOut, Maximize2, Move, Ruler } from 'lucide-react';
 
 export default function ProfessionalCADCanvas({
   pieces = [],
@@ -81,7 +83,6 @@ export default function ProfessionalCADCanvas({
   // Canvas Mouse Down
   const handleMouseDown = (e) => {
     if (e.button === 1 || activeTool === 'pan') {
-      // Middle click or Pan tool
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
       return;
@@ -100,8 +101,8 @@ export default function ProfessionalCADCanvas({
   // Canvas Mouse Move
   const handleMouseMove = (e) => {
     if (isPanning) {
-      const dx = (e.clientX - panStart.x) * (viewBox.width / containerRef.current.clientWidth);
-      const dy = (e.clientY - panStart.y) * (viewBox.height / containerRef.current.clientHeight);
+      const dx = (e.clientX - panStart.x) * (viewBox.width / (containerRef.current?.clientWidth || 1000));
+      const dy = (e.clientY - panStart.y) * (viewBox.height / (containerRef.current?.clientHeight || 750));
       setViewBox((prev) => ({
         ...prev,
         x: prev.x - dx,
@@ -143,7 +144,7 @@ export default function ProfessionalCADCanvas({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-[#f8fafc] overflow-hidden select-none border border-slate-200 rounded-xl shadow-inner"
+      className="relative w-full h-full bg-[#F3F3F0] overflow-hidden select-none"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -157,18 +158,18 @@ export default function ProfessionalCADCanvas({
         className="w-full h-full"
       >
         <defs>
-          {/* Technical CAD Grid Pattern (1 inch = 12px, major grid = 60px / 5 inches) */}
+          {/* Refined subtle CAD Grid: Minor grid 12px, Major grid 60px */}
           <pattern id="cad-small-grid" width="12" height="12" patternUnits="userSpaceOnUse">
-            <path d="M 12 0 L 0 0 0 12" fill="none" stroke="#e2e8f0" strokeWidth="0.5" />
+            <path d="M 12 0 L 0 0 0 12" fill="none" stroke="#E5E5DF" strokeWidth="0.5" />
           </pattern>
           <pattern id="cad-grid" width="60" height="60" patternUnits="userSpaceOnUse">
             <rect width="60" height="60" fill="url(#cad-small-grid)" />
-            <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#cbd5e1" strokeWidth="1" />
+            <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#D3D3CB" strokeWidth="0.8" />
           </pattern>
 
           {/* Grainline Arrowhead Marker */}
-          <marker id="grain-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#b45309" />
+          <marker id="grain-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 2 L 10 5 L 0 8 z" fill="#9B7B38" />
           </marker>
         </defs>
 
@@ -185,7 +186,7 @@ export default function ProfessionalCADCanvas({
 
         {/* Graded Nesting Layers (if active) */}
         {gradedLayers.map((layer) => (
-          <g key={layer.sizeKey} opacity={0.6}>
+          <g key={layer.sizeKey} opacity={0.65}>
             {layer.pieces.map((p) => (
               <path
                 key={p.id}
@@ -202,8 +203,8 @@ export default function ProfessionalCADCanvas({
         {/* Main Pattern Pieces */}
         {pieces.map((piece) => {
           const isSelected = piece.id === selectedPieceId;
-          const strokeColor = isSelected ? '#d97706' : '#0f172a';
-          const fillColor = isSelected ? 'rgba(245, 158, 11, 0.04)' : 'rgba(255, 255, 255, 0.7)';
+          const strokeColor = isSelected ? '#C5A059' : '#1A1B1D';
+          const fillColor = isSelected ? 'rgba(197, 160, 89, 0.08)' : 'rgba(255, 255, 255, 0.75)';
 
           return (
             <g
@@ -212,15 +213,15 @@ export default function ProfessionalCADCanvas({
                 e.stopPropagation();
                 onSelectPiece(piece.id);
               }}
-              className="cursor-pointer"
+              className="cursor-pointer group"
             >
               {/* Outer Cut Boundary (Seam Allowance) */}
               {showSeamAllowance && piece.seamAllowancePath && (
                 <path
                   d={piece.seamAllowancePath}
                   fill="none"
-                  stroke={isSelected ? '#d97706' : '#475569'}
-                  strokeWidth="1.8"
+                  stroke={isSelected ? '#C5A059' : '#5E6068'}
+                  strokeWidth={isSelected ? '2.0' : '1.5'}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
@@ -231,11 +232,11 @@ export default function ProfessionalCADCanvas({
                 d={piece.path}
                 fill={fillColor}
                 stroke={strokeColor}
-                strokeWidth={piece.seamAllowancePath ? '1.0' : '2.0'}
+                strokeWidth={piece.seamAllowancePath ? '1.0' : '1.8'}
                 strokeDasharray={piece.seamAllowancePath ? '3,3' : 'none'}
               />
 
-              {/* Internal Lines (Dart Fold, Placket, Crease) */}
+              {/* Internal Lines (Crease, Fold, Placket) */}
               {(piece.internalLines || []).map((line, idx) => (
                 <line
                   key={idx}
@@ -243,8 +244,8 @@ export default function ProfessionalCADCanvas({
                   y1={line.y1}
                   x2={line.x2}
                   y2={line.y2}
-                  stroke="#64748b"
-                  strokeWidth="1"
+                  stroke="#7A7C85"
+                  strokeWidth="0.9"
                   strokeDasharray="4,2"
                 />
               ))}
@@ -252,8 +253,8 @@ export default function ProfessionalCADCanvas({
               {/* Darts */}
               {(piece.darts || []).map((dart, idx) => (
                 <g key={idx}>
-                  <line x1={dart.left.x} y1={dart.left.y} x2={dart.apex.x} y2={dart.apex.y} stroke="#64748b" strokeWidth="1" />
-                  <line x1={dart.right.x} y1={dart.right.y} x2={dart.apex.x} y2={dart.apex.y} stroke="#64748b" strokeWidth="1" />
+                  <line x1={dart.left.x} y1={dart.left.y} x2={dart.apex.x} y2={dart.apex.y} stroke="#7A7C85" strokeWidth="0.9" />
+                  <line x1={dart.right.x} y1={dart.right.y} x2={dart.apex.x} y2={dart.apex.y} stroke="#7A7C85" strokeWidth="0.9" />
                 </g>
               ))}
 
@@ -265,18 +266,19 @@ export default function ProfessionalCADCanvas({
                     y1={piece.grainline.y1}
                     x2={piece.grainline.x2}
                     y2={piece.grainline.y2}
-                    stroke="#b45309"
-                    strokeWidth="1.5"
+                    stroke="#9B7B38"
+                    strokeWidth="1.2"
                     markerStart="url(#grain-arrow)"
                     markerEnd="url(#grain-arrow)"
                   />
                   <text
-                    x={(piece.grainline.x1 + piece.grainline.x2) / 2 + 6}
+                    x={(piece.grainline.x1 + piece.grainline.x2) / 2 + 5}
                     y={(piece.grainline.y1 + piece.grainline.y2) / 2}
-                    fill="#b45309"
-                    fontSize="9"
-                    fontWeight="bold"
+                    fill="#9B7B38"
+                    fontSize="8.5"
+                    fontWeight="600"
                     fontFamily="sans-serif"
+                    letterSpacing="0.05em"
                   >
                     GRAIN
                   </text>
@@ -289,53 +291,52 @@ export default function ProfessionalCADCanvas({
                   key={idx}
                   cx={notch.x}
                   cy={notch.y}
-                  r="3.5"
-                  fill="#ef4444"
-                  stroke="#ffffff"
+                  r="3"
+                  fill="#D14545"
+                  stroke="#FFFFFF"
                   strokeWidth="1"
                 />
               ))}
 
-              {/* Center Piece Label & Cut Qty */}
+              {/* Professional Annotation Labels */}
               {piece.bounds && (
                 <text
                   x={piece.bounds.centerX}
                   y={piece.bounds.centerY}
                   textAnchor="middle"
-                  fill="#334155"
-                  fontSize="11"
+                  fill={isSelected ? '#1A1B1D' : '#32343A'}
+                  fontSize="10"
                   fontWeight="600"
                   fontFamily="sans-serif"
                 >
-                  <tspan x={piece.bounds.centerX} dy="0">{piece.name}</tspan>
-                  <tspan x={piece.bounds.centerX} dy="14" fontSize="9" fill="#64748b">{piece.cutQuantity}</tspan>
+                  <tspan x={piece.bounds.centerX} dy="-2">{piece.name}</tspan>
+                  <tspan x={piece.bounds.centerX} dy="12" fontSize="8" fill="#6B6D75">{piece.cutQuantity}</tspan>
                 </text>
               )}
             </g>
           );
         })}
 
-        {/* Editable Vertex Handles (When Node Tool is Active on Selected Piece) */}
+        {/* Editable Vertex Handles (When Node Tool is Active) */}
         {activeTool === 'node' && selectedPiece && (selectedPiece.points || []).map((pt, idx) => (
           <g key={pt.id || idx}>
             <circle
               cx={pt.x}
               cy={pt.y}
-              r="5.5"
-              fill={pt.type === 'smooth' ? '#38bdf8' : '#d97706'}
-              stroke="#ffffff"
-              strokeWidth="2"
+              r="5"
+              fill={pt.type === 'smooth' ? '#38BDF8' : '#C5A059'}
+              stroke="#101112"
+              strokeWidth="1.5"
               className="cursor-move hover:scale-125 transition-transform"
               onMouseDown={(e) => {
                 e.stopPropagation();
                 setDraggingNode({ pieceId: selectedPiece.id, pointIndex: idx });
               }}
             />
-            {/* Control Point Handles if smooth bezier */}
             {pt.cp1 && (
               <>
-                <line x1={pt.x} y1={pt.y} x2={pt.cp1.x} y2={pt.cp1.y} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2,2" />
-                <circle cx={pt.cp1.x} cy={pt.cp1.y} r="3.5" fill="#0284c7" stroke="#ffffff" strokeWidth="1" />
+                <line x1={pt.x} y1={pt.y} x2={pt.cp1.x} y2={pt.cp1.y} stroke="#38BDF8" strokeWidth="0.8" strokeDasharray="2,2" />
+                <circle cx={pt.cp1.x} cy={pt.cp1.y} r="3" fill="#0284C7" stroke="#101112" strokeWidth="1" />
               </>
             )}
           </g>
@@ -345,7 +346,7 @@ export default function ProfessionalCADCanvas({
         {tapePoints.length > 0 && (
           <g>
             {tapePoints.map((pt, idx) => (
-              <circle key={idx} cx={pt.x} cy={pt.y} r="4" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+              <circle key={idx} cx={pt.x} cy={pt.y} r="3.5" fill="#0284C7" stroke="#FFFFFF" strokeWidth="1.5" />
             ))}
             {tapePoints.length === 2 && (
               <>
@@ -354,26 +355,27 @@ export default function ProfessionalCADCanvas({
                   y1={tapePoints[0].y}
                   x2={tapePoints[1].x}
                   y2={tapePoints[1].y}
-                  stroke="#0284c7"
-                  strokeWidth="2"
-                  strokeDasharray="4,4"
+                  stroke="#0284C7"
+                  strokeWidth="1.5"
+                  strokeDasharray="4,3"
                 />
                 <rect
-                  x={(tapePoints[0].x + tapePoints[1].x) / 2 - 35}
-                  y={(tapePoints[0].y + tapePoints[1].y) / 2 - 18}
-                  width="70"
-                  height="22"
-                  rx="6"
-                  fill="#0f172a"
-                  opacity="0.9"
+                  x={(tapePoints[0].x + tapePoints[1].x) / 2 - 32}
+                  y={(tapePoints[0].y + tapePoints[1].y) / 2 - 16}
+                  width="64"
+                  height="20"
+                  rx="5"
+                  fill="#101112"
+                  opacity="0.92"
                 />
                 <text
                   x={(tapePoints[0].x + tapePoints[1].x) / 2}
-                  y={(tapePoints[0].y + tapePoints[1].y) / 2 - 4}
+                  y={(tapePoints[0].y + tapePoints[1].y) / 2 - 3}
                   textAnchor="middle"
-                  fill="#ffffff"
-                  fontSize="11"
-                  fontWeight="bold"
+                  fill="#E5C07B"
+                  fontSize="10"
+                  fontWeight="600"
+                  fontFamily="monospace"
                 >
                   {tapeDistanceInches}"
                 </text>
@@ -383,42 +385,46 @@ export default function ProfessionalCADCanvas({
         )}
       </svg>
 
-      {/* Viewport Floating Controls */}
-      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-xl p-1.5 shadow-md flex items-center gap-1.5 text-xs text-slate-700">
+      {/* Viewport Floating Controls (Compact Creative Dock) */}
+      <div className="absolute bottom-4 right-4 bg-[#141517]/90 backdrop-blur-md border border-[#2B2D31] rounded-xl p-1 shadow-floating flex items-center gap-1 text-xs text-[#EDEDF0] z-20">
         <button
           onClick={() => setViewBox((v) => ({ ...v, width: v.width * 0.85, height: v.height * 0.85 }))}
-          className="px-2.5 py-1 hover:bg-slate-100 rounded-lg font-bold"
+          className="w-7 h-7 rounded-lg hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-center transition-colors"
           title="Zoom In"
         >
-          +
+          <ZoomIn className="w-3.5 h-3.5" />
         </button>
-        <span className="font-mono text-[11px] px-1">{Math.round(100 / (viewBox.width / 900))}%</span>
+        <span className="font-mono text-[11px] text-[#C5A059] px-1 select-none">
+          {Math.round(100 / (viewBox.width / 900))}%
+        </span>
         <button
           onClick={() => setViewBox((v) => ({ ...v, width: v.width * 1.15, height: v.height * 1.15 }))}
-          className="px-2.5 py-1 hover:bg-slate-100 rounded-lg font-bold"
+          className="w-7 h-7 rounded-lg hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-center transition-colors"
           title="Zoom Out"
         >
-          -
+          <ZoomOut className="w-3.5 h-3.5" />
         </button>
-        <div className="w-px h-4 bg-slate-200 mx-0.5"></div>
+        <div className="w-px h-3.5 bg-[#2B2D31] mx-0.5" />
         <button
           onClick={handleFitToScreen}
-          className="px-2.5 py-1 hover:bg-slate-100 rounded-lg font-medium text-[11px]"
+          className="px-2.5 h-7 rounded-lg hover:bg-[#202226] text-[#EDEDF0] text-[11px] font-medium transition-colors"
+          title="Reset to full pattern extents"
         >
           Fit View
         </button>
       </div>
 
-      {/* Active Mode Banner */}
+      {/* Active Mode Floating Banner */}
       {activeTool === 'node' && (
-        <div className="absolute top-3 left-4 bg-amber-500/10 border border-amber-500/30 text-amber-800 text-xs px-3 py-1.5 rounded-lg flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-          <span>Node Edit Mode: Click and drag vertex nodes to reshape piece geometry.</span>
+        <div className="absolute top-3 left-4 bg-[#141517]/90 backdrop-blur-md border border-[#C5A059]/40 text-[#E5C07B] text-xs px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-floating z-20">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#C5A059] animate-ping"></span>
+          <span>Node Edit Mode: Drag vertices to adjust curves</span>
         </div>
       )}
       {activeTool === 'tape' && (
-        <div className="absolute top-3 left-4 bg-sky-500/10 border border-sky-500/30 text-sky-800 text-xs px-3 py-1.5 rounded-lg flex items-center gap-2">
-          <span>Digital Tape: Click two points on the canvas to measure exact linear distance.</span>
+        <div className="absolute top-3 left-4 bg-[#141517]/90 backdrop-blur-md border border-sky-500/40 text-sky-300 text-xs px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-floating z-20">
+          <Ruler className="w-3.5 h-3.5 text-sky-400" />
+          <span>Tape Measure: Click two points to measure distance</span>
         </div>
       )}
     </div>

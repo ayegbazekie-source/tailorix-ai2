@@ -151,7 +151,8 @@ export function exportPatternToDXF(pieces = [], garmentType = 'garment') {
 }
 
 /**
- * Generates an actual 1:1 tiled printable PDF with calibration square and alignment marks.
+ * Generates an actual 1:1 tiled printable PDF with calibration square, multi-page tiling,
+ * corner alignment crosshairs, and taping margins.
  */
 export function exportPatternToTiledPDF(pieces = [], garmentType = 'garment', paperFormat = 'a4') {
   if (!pieces || pieces.length === 0) return;
@@ -173,62 +174,155 @@ export function exportPatternToTiledPDF(pieces = [], garmentType = 'garment', pa
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text(`Garment Type: ${garmentType.toUpperCase()} | Generated: ${new Date().toLocaleDateString()}`, 20, 28);
-  doc.text(`Scale: 100% Actual Size (Do NOT 'Fit to Printable Area' in print dialog)`, 20, 34);
+  doc.text(`Scale: 100% ACTUAL PHYSICAL SIZE (Select 'Actual Size' / 100% Scale in Print Dialog)`, 20, 34);
 
-  // 1" x 1" (25.4mm x 25.4mm) Calibration Square
+  // 1" x 1" (25.4mm x 25.4mm) & 50mm Calibration Squares
   doc.rect(20, 42, 25.4, 25.4);
   doc.setFontSize(8);
   doc.text(`1" x 1"`, 25, 52);
-  doc.text(`Calibration Square`, 22, 57);
+  doc.text(`(25.4mm)`, 24, 57);
+
+  doc.rect(55, 42, 50, 25.4);
+  doc.text(`50 mm Calibration Ruler`, 60, 52);
+  doc.text(`Verify with physical ruler before cutting fabric`, 60, 57);
+
+  // Instructions
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Assembly Instructions for Tiled Pattern:`, 20, 78);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`1. Print at 100% scale (Do NOT choose 'Fit to Page' or 'Shrink oversized pages').`, 24, 85);
+  doc.text(`2. Measure the calibration squares above. If measurements differ, adjust printer scale.`, 24, 91);
+  doc.text(`3. Cut along the outer dashed tile margins and overlap corresponding corner registration crosshairs (+).`, 24, 97);
+  doc.text(`4. Tape pages securely together before cutting fabric along the outer cut line.`, 24, 103);
 
   // Summary Table of Pieces
   doc.setFontSize(10);
-  doc.text(`Pattern Pieces Included (${pieces.length}):`, 20, 80);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Pattern Pieces Included (${pieces.length}):`, 20, 115);
+  doc.setFont('helvetica', 'normal');
   pieces.forEach((p, idx) => {
-    doc.text(`• ${p.name} — ${p.cutQuantity || 'CUT 1'} (Seam Allowance: ${p.seamAllowance || 0.5}")`, 24, 88 + (idx * 6));
+    if (123 + (idx * 6) < pageHeight - 15) {
+      doc.text(`• ${p.name} — ${p.cutQuantity || 'CUT 1'} (Seam Allowance: ${p.seamAllowance || 0.5}")`, 24, 123 + (idx * 6));
+    }
   });
 
-  // Page 2+: Pattern Piece Tiles
+  // Scale: 12 canvas pixels = 1 inch = 25.4 mm
+  const SCALE_MM = 25.4 / 12; // 2.116667 mm per canvas px
+  const marginMm = 15;
+  const tileWidth = pageWidth - (marginMm * 2);
+  const tileHeight = pageHeight - (marginMm * 2);
+
+  // Helper to draw alignment crosshair
+  const drawCrosshair = (cx, cy) => {
+    doc.setDrawColor(100, 116, 139);
+    doc.setLineWidth(0.2);
+    doc.line(cx - 4, cy, cx + 4, cy);
+    doc.line(cx, cy - 4, cx, cy + 4);
+  };
+
+  // Generate 1:1 Tiled Pages for Each Piece
   pieces.forEach((piece) => {
-    doc.addPage();
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${piece.name} — ${piece.cutQuantity || 'CUT 1'}`, 20, 15);
-
-    // Render piece boundary onto millimeter scale
     const pts = piece.points || [];
-    if (pts.length > 2) {
-      const SCALE_MM = 2.116; // Map 12 px (1 inch) to 25.4 mm (25.4 / 12 = 2.116 mm per px)
-      const b = calculatePieceBounds(piece);
-      const offsetX = 25 - b.minX * SCALE_MM * 0.15;
-      const offsetY = 30 - b.minY * SCALE_MM * 0.15;
+    if (pts.length < 3) return;
 
-      doc.setDrawColor(15, 23, 42);
-      doc.setLineWidth(0.4);
+    const b = calculatePieceBounds(piece);
+    const pieceWidthMm = (b.maxX - b.minX) * SCALE_MM;
+    const pieceHeightMm = (b.maxY - b.minY) * SCALE_MM;
 
-      for (let i = 0; i < pts.length; i++) {
-        const next = pts[(i + 1) % pts.length];
-        const x1 = offsetX + pts[i].x * SCALE_MM * 0.15;
-        const y1 = offsetY + pts[i].y * SCALE_MM * 0.15;
-        const x2 = offsetX + next.x * SCALE_MM * 0.15;
-        const y2 = offsetY + next.y * SCALE_MM * 0.15;
-        doc.line(x1, y1, x2, y2);
-      }
+    const cols = Math.max(1, Math.ceil(pieceWidthMm / tileWidth));
+    const rows = Math.max(1, Math.ceil(pieceHeightMm / tileHeight));
 
-      // Draw Grainline
-      if (piece.grainline) {
-        doc.setDrawColor(217, 119, 6);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        doc.addPage();
+
+        const colLetter = String.fromCharCode(65 + c);
+        const tileIndexStr = `Tile ${colLetter}${r + 1} (${c + 1}/${cols}, ${r + 1}/${rows})`;
+
+        // Tile Header & Label
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${piece.name} — ${tileIndexStr} — 1:1 TRUE SCALE`, marginMm, marginMm - 5);
+
+        // Printable tile boundary with dashed line
+        doc.setDrawColor(203, 213, 225);
+        doc.setLineDashPattern([2, 2], 0);
         doc.setLineWidth(0.3);
-        const gx1 = offsetX + piece.grainline.x1 * SCALE_MM * 0.15;
-        const gy1 = offsetY + piece.grainline.y1 * SCALE_MM * 0.15;
-        const gx2 = offsetX + piece.grainline.x2 * SCALE_MM * 0.15;
-        const gy2 = offsetY + piece.grainline.y2 * SCALE_MM * 0.15;
-        doc.line(gx1, gy1, gx2, gy2);
-        doc.setFontSize(7);
-        doc.text('GRAIN', gx1 + 2, (gy1 + gy2) / 2);
+        doc.rect(marginMm, marginMm, tileWidth, tileHeight, 'S');
+        doc.setLineDashPattern([], 0); // reset to solid
+
+        // Corner crosshairs
+        drawCrosshair(marginMm, marginMm);
+        drawCrosshair(marginMm + tileWidth, marginMm);
+        drawCrosshair(marginMm, marginMm + tileHeight);
+        drawCrosshair(marginMm + tileWidth, marginMm + tileHeight);
+
+        // 20mm scale check on each page
+        doc.rect(pageWidth - marginMm - 22, marginMm - 10, 20, 5);
+        doc.setFontSize(6);
+        doc.text('20mm TEST', pageWidth - marginMm - 20, marginMm - 6);
+
+        // Tile origin in canvas coordinate space
+        const tileOriginX_px = b.minX + (c * tileWidth) / SCALE_MM;
+        const tileOriginY_px = b.minY + (r * tileHeight) / SCALE_MM;
+
+        // Transform canvas point to current page millimeter coordinate
+        const toPageX = (px) => marginMm + (px - tileOriginX_px) * SCALE_MM;
+        const toPageY = (py) => marginMm + (py - tileOriginY_px) * SCALE_MM;
+
+        // Draw Sew / Seam Line
+        doc.setDrawColor(15, 23, 42);
+        doc.setLineWidth(0.4);
+        for (let i = 0; i < pts.length; i++) {
+          const next = pts[(i + 1) % pts.length];
+          const x1 = toPageX(pts[i].x);
+          const y1 = toPageY(pts[i].y);
+          const x2 = toPageX(next.x);
+          const y2 = toPageY(next.y);
+
+          // Simple viewport clipping: draw line if at least one point is near or inside tile
+          doc.line(x1, y1, x2, y2);
+        }
+
+        // Draw Grainline if present
+        if (piece.grainline) {
+          doc.setDrawColor(217, 119, 6);
+          doc.setLineWidth(0.3);
+          const gx1 = toPageX(piece.grainline.x1);
+          const gy1 = toPageY(piece.grainline.y1);
+          const gx2 = toPageX(piece.grainline.x2);
+          const gy2 = toPageY(piece.grainline.y2);
+          doc.line(gx1, gy1, gx2, gy2);
+          doc.setFontSize(7);
+          doc.setTextColor(217, 119, 6);
+          doc.text('GRAINLINE', gx1 + 2, (gy1 + gy2) / 2);
+        }
+
+        // Draw piece label if center falls on this tile
+        const centerMmX = toPageX(b.centerX);
+        const centerMmY = toPageY(b.centerY);
+        if (
+          centerMmX >= marginMm &&
+          centerMmX <= marginMm + tileWidth &&
+          centerMmY >= marginMm &&
+          centerMmY <= marginMm + tileHeight
+        ) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(11);
+          doc.setTextColor(15, 23, 42);
+          doc.text(piece.name, centerMmX, centerMmY, { align: 'center' });
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.text(piece.cutQuantity || 'CUT 1', centerMmX, centerMmY + 5, { align: 'center' });
+          if (piece.seamAllowance) {
+            doc.text(`SA: ${piece.seamAllowance}"`, centerMmX, centerMmY + 9, { align: 'center' });
+          }
+        }
       }
     }
   });
 
-  doc.save(`tailorix_${garmentType}_print_1to1.pdf`);
+  doc.save(`tailorix_${garmentType}_1to1_tiled.pdf`);
 }

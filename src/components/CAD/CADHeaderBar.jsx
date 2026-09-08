@@ -1,7 +1,7 @@
 /**
  * TAILORIX AI — CAD HEADER & WORKSPACE CONTROL BAR
- * Top application bar featuring Garment Specification selector, Workspace Mode switcher,
- * Units toggle, Undo/Redo, and Production Vector Export triggers.
+ * Refined dark graphite application toolbar featuring Garment Taxonomy selector,
+ * Workspace Mode switcher, Units toggle, Undo/Redo, and Production Vector Export.
  */
 
 import React, { useState } from 'react';
@@ -14,6 +14,8 @@ import {
   FileText,
   SlidersHorizontal,
   ChevronDown,
+  Save,
+  Check,
 } from 'lucide-react';
 import { GARMENT_TAXONOMY } from '../../models/garmentTaxonomy';
 
@@ -28,50 +30,49 @@ export default function CADHeaderBar({
   canRedo = false,
   onUndo = () => {},
   onRedo = () => {},
+  onSaveProject = () => {},
   onExportSVG = () => {},
   onExportDXF = () => {},
   onExportPDF = () => {},
 }) {
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
 
   const viewModes = [
     { id: 'cad', label: 'CAD Canvas', icon: Layers },
     { id: 'grading', label: 'Grading Nest', icon: SlidersHorizontal },
     { id: 'marker', label: 'Fabric Marker', icon: FileText },
-    { id: '3d', label: '3D Simulation', icon: Box },
+    { id: '3d', label: '3D Fit', icon: Box },
   ];
 
+  const handleSave = () => {
+    onSaveProject();
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2000);
+  };
+
   return (
-    <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between shadow-xs z-20 shrink-0">
-      {/* Brand & Garment Taxonomy Selector */}
-      <div className="flex items-center gap-3">
+    <header className="h-12 bg-[#141517] border-b border-[#222427] px-3 sm:px-4 flex items-center justify-between z-20 shrink-0 select-none">
+      {/* Garment Taxonomy Selector & Project Info */}
+      <div className="flex items-center gap-2.5">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500 flex items-center justify-center font-black text-slate-950 text-xs shadow-sm">
-            TX
-          </div>
-          <span className="font-extrabold text-sm tracking-tight text-slate-900 hidden sm:inline">
-            TAILORIX <span className="text-amber-600 font-semibold">CAD</span>
-          </span>
+          <span className="text-[11px] font-medium text-[#8A8B93] hidden md:inline">Pattern:</span>
+          <select
+            value={garmentType}
+            onChange={(e) => onChangeGarmentType(e.target.value)}
+            className="bg-[#1A1B1E] border border-[#2A2C30] hover:border-[#383A40] text-[#EDEDF0] text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#C5A059]/60 cursor-pointer transition-colors"
+          >
+            {Object.entries(GARMENT_TAXONOMY).map(([key, item]) => (
+              <option key={key} value={item.id} className="bg-[#18191B] text-[#EDEDF0]">
+                {item.displayName || item.name}
+              </option>
+            ))}
+          </select>
         </div>
-
-        <div className="h-4 w-px bg-slate-200 mx-1 hidden sm:block"></div>
-
-        {/* Garment Selector */}
-        <select
-          value={garmentType}
-          onChange={(e) => onChangeGarmentType(e.target.value)}
-          className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
-        >
-          {Object.entries(GARMENT_TAXONOMY).map(([key, item]) => (
-            <option key={key} value={item.id}>
-              {item.displayName || item.name}
-            </option>
-          ))}
-        </select>
       </div>
 
-      {/* Primary Workspace View Switcher */}
-      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/80 gap-0.5">
+      {/* Primary Workspace View Switcher (Segmented Control) */}
+      <div className="flex bg-[#1A1B1E] p-1 rounded-xl border border-[#282A2E] gap-0.5">
         {viewModes.map((mode) => {
           const Icon = mode.icon;
           const isActive = activeViewMode === mode.id;
@@ -79,14 +80,14 @@ export default function CADHeaderBar({
             <button
               key={mode.id}
               onClick={() => onChangeViewMode(mode.id)}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all ${
                 isActive
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-900'
+                  ? 'bg-[#C5A059]/15 border border-[#C5A059]/35 text-[#E5C07B] font-semibold shadow-gold-sm'
+                  : 'text-[#9E9EA7] hover:text-[#EDEDF0] hover:bg-[#222427] border border-transparent'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{mode.label}</span>
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#E5C07B]' : 'text-[#8A8B93]'}`} />
+              <span className="hidden sm:inline">{mode.label}</span>
             </button>
           );
         })}
@@ -95,11 +96,11 @@ export default function CADHeaderBar({
       {/* Controls & Export Trigger */}
       <div className="flex items-center gap-2">
         {/* Undo / Redo */}
-        <div className="flex items-center gap-1 mr-1">
+        <div className="flex items-center gap-0.5 mr-0.5">
           <button
             onClick={onUndo}
             disabled={!canUndo}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[#8A8B93] hover:text-[#EDEDF0] hover:bg-[#202225] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             title="Undo"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -107,7 +108,7 @@ export default function CADHeaderBar({
           <button
             onClick={onRedo}
             disabled={!canRedo}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[#8A8B93] hover:text-[#EDEDF0] hover:bg-[#202225] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             title="Redo"
           >
             <RotateCw className="w-3.5 h-3.5" />
@@ -117,17 +118,36 @@ export default function CADHeaderBar({
         {/* Units Toggle */}
         <button
           onClick={onToggleUnits}
-          className="text-xs font-mono font-bold px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 uppercase"
+          className="text-[11px] font-mono font-semibold px-2 py-1 rounded-md bg-[#1C1D20] hover:bg-[#25272B] border border-[#2A2B2E] text-[#C5A059] uppercase transition-colors"
           title="Toggle Inches / Metric"
         >
           {units}
+        </button>
+
+        {/* Save Draft */}
+        <button
+          onClick={handleSave}
+          className="flex items-center gap-1.5 bg-[#1C1D20] hover:bg-[#25272B] text-[#EDEDF0] font-medium text-xs px-2.5 py-1.5 rounded-lg border border-[#2A2B2E] hover:border-[#383A3E] transition-colors"
+          title="Save project draft"
+        >
+          {savedSuccess ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline text-emerald-400">Saved</span>
+            </>
+          ) : (
+            <>
+              <Save className="w-3.5 h-3.5 text-[#8A8B93]" />
+              <span className="hidden sm:inline">Save</span>
+            </>
+          )}
         </button>
 
         {/* Export Dropdown */}
         <div className="relative">
           <button
             onClick={() => setShowExportMenu(!showExportMenu)}
-            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition-colors"
+            className="flex items-center gap-1.5 bg-[#C5A059] hover:bg-[#D4AF37] active:bg-[#B38F46] text-[#101112] font-semibold text-xs px-3 py-1.5 rounded-lg shadow-sm transition-all"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export</span>
@@ -136,29 +156,29 @@ export default function CADHeaderBar({
 
           {showExportMenu && (
             <div
-              className="absolute right-0 mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 z-50 text-xs font-medium"
+              className="absolute right-0 mt-1.5 w-52 bg-[#17181A] border border-[#2D2E32] rounded-xl shadow-floating py-1.5 z-50 text-xs font-medium animate-in fade-in zoom-in-95 duration-100"
               onClick={() => setShowExportMenu(false)}
             >
               <button
                 onClick={onExportSVG}
-                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-slate-800 flex items-center justify-between"
+                className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
               >
-                <span>Production SVG</span>
-                <span className="text-[10px] text-slate-400 font-mono">.svg</span>
+                <span>Production Vector SVG</span>
+                <span className="text-[10px] text-[#C5A059] font-mono">.svg</span>
               </button>
               <button
                 onClick={onExportDXF}
-                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-slate-800 flex items-center justify-between"
+                className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
               >
                 <span>AutoCAD / AAMA DXF</span>
-                <span className="text-[10px] text-slate-400 font-mono">.dxf</span>
+                <span className="text-[10px] text-[#8A8B93] font-mono">.dxf</span>
               </button>
               <button
                 onClick={onExportPDF}
-                className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-slate-800 flex items-center justify-between"
+                className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
               >
-                <span>Tiled 1:1 Print PDF</span>
-                <span className="text-[10px] text-slate-400 font-mono">.pdf</span>
+                <span>Tiled 1:1 Print Sheet</span>
+                <span className="text-[10px] text-[#8A8B93] font-mono">.pdf</span>
               </button>
             </div>
           )}

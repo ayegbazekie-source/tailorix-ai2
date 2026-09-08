@@ -1,24 +1,18 @@
-import React, { useState } from 'react';
-import { CanvasProvider } from '../context/CanvasContext';
-import CanvasWorkspace from '../components/StudioCanvas/CanvasWorkspace';
-import Toolbar from '../components/StudioCanvas/Toolbar';
-import LayerPanel from '../components/StudioCanvas/LayerPanel';
+/**
+ * TAILORIX AI — STUDIO CANVAS PAGE
+ * Feature A: The main interactive cutting board, drafting playground, and pre-sewing digital workplace.
+ * Directly receives pattern piece objects exported from the Garment Deconstruct analyzer tool.
+ */
+
+import React from 'react';
+import AutodeskSketchCADPlayground from '../components/StudioCanvas/AutodeskSketchCADPlayground';
 
 export default function StudioCanvasPage() {
-  const [isLayerPanelOpen, setIsLayerPanelOpen] = useState(false);
-
   return (
-    <CanvasProvider>
-      <div className="relative w-full h-full bg-slate-950 overflow-hidden">
-        <CanvasWorkspace 
-          onOpenLayers={() => setIsLayerPanelOpen(!isLayerPanelOpen)}
-        />
-
-        <LayerPanel 
-          isOpen={isLayerPanelOpen} 
-          onClose={() => setIsLayerPanelOpen(false)} 
-        />
-      </div>
-    </CanvasProvider>
+    <div className="w-full h-full bg-[#101112] text-slate-100 overflow-hidden">
+      <AutodeskSketchCADPlayground defaultMode="sketch" />
+    </div>
   );
 }
+
+

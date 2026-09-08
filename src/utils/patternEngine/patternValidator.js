@@ -109,7 +109,7 @@ export function validatePatternPieces(pieces = []) {
       errors: issues.filter((i) => i.type === 'error').length,
       warnings: issues.filter((i) => i.type === 'warning').length,
       info: issues.filter((i) => i.type === 'info').length,
-      status: hasErrors ? 'Invalid (Action Required)' : hasWarnings ? 'Compliant with Warnings' : 'Production Ready',
+      status: hasErrors ? 'Invalid (Action Required)' : hasWarnings ? 'Geometry Valid (Advisories Present)' : 'Geometry Valid (Standard Tolerances)',
     },
   };
 }

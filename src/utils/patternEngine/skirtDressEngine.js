@@ -160,7 +160,7 @@ export function draftSkirtDressPattern(measurements = {}, parameters = {}, garme
 
     const gownBodiceFront = createPatternPiece({
       id: 'GOWN_BODICE_FRONT',
-      name: 'GOWN CORSET BODICE (FRONT)',
+      name: 'Front Bodice Panel',
       category: 'shell',
       cutQuantity: 'CUT 1 ON FOLD',
       onFold: true,
@@ -191,9 +191,68 @@ export function draftSkirtDressPattern(measurements = {}, parameters = {}, garme
       ],
     });
 
+    const bxBodice = gx0 + quarterBust + 10;
+    const byBodice = gy0;
+    const gownBodiceBack = createPatternPiece({
+      id: 'GOWN_BODICE_BACK',
+      name: 'Back Bodice Panel',
+      category: 'shell',
+      cutQuantity: 'CUT 2 (PAIR)',
+      onFold: false,
+      points: [
+        createPoint(bxBodice * SCALE, byBodice * SCALE, 'corner', { label: 'Center Back Neck' }),
+        createPoint((bxBodice + quarterBust - 0.5) * SCALE, (byBodice + 2) * SCALE, 'corner', { label: 'Back Underarm' }),
+        createPoint((bxBodice + quarterWaistBack) * SCALE, (byBodice + bodiceHeight) * SCALE, 'corner', { label: 'Back Waist Side' }),
+        createPoint(bxBodice * SCALE, (byBodice + bodiceHeight) * SCALE, 'corner', { label: 'Center Back Waist' }),
+      ],
+      seamAllowance,
+      grainline: {
+        x1: (bxBodice + 2) * SCALE,
+        y1: (byBodice + 2) * SCALE,
+        x2: (bxBodice + 2) * SCALE,
+        y2: (byBodice + bodiceHeight - 2) * SCALE,
+        label: 'LENGTHWISE GRAIN',
+      },
+      darts: [
+        {
+          apex: { x: (bxBodice + quarterWaistBack * 0.5) * SCALE, y: (byBodice + 6) * SCALE },
+          left: { x: (bxBodice + quarterWaistBack * 0.5 - 0.5) * SCALE, y: (byBodice + bodiceHeight) * SCALE },
+          right: { x: (bxBodice + quarterWaistBack * 0.5 + 0.5) * SCALE, y: (byBodice + bodiceHeight) * SCALE },
+        },
+      ],
+    });
+
+    const sx0 = bxBodice + quarterBust + 10;
+    const sy0 = gy0;
+    const gownSideFront = createPatternPiece({
+      id: 'GOWN_SIDE_FRONT',
+      name: 'Side Front Panel',
+      category: 'shell',
+      cutQuantity: 'CUT 2 (PAIR)',
+      onFold: false,
+      points: [
+        createPoint(sx0 * SCALE, (sy0 + 2) * SCALE, 'smooth', {
+          label: 'Princess Armhole',
+          cp1: { x: (sx0 + 1) * SCALE, y: sy0 * SCALE },
+          cp2: { x: (sx0 + 3) * SCALE, y: (sy0 + 1) * SCALE },
+        }),
+        createPoint((sx0 + 5) * SCALE, (sy0 + 4) * SCALE, 'corner', { label: 'Side Bust Apex' }),
+        createPoint((sx0 + 4.5) * SCALE, (sy0 + bodiceHeight) * SCALE, 'corner', { label: 'Side Waist Outer' }),
+        createPoint(sx0 * SCALE, (sy0 + bodiceHeight) * SCALE, 'corner', { label: 'Princess Seam Waist' }),
+      ],
+      seamAllowance,
+      grainline: {
+        x1: (sx0 + 2) * SCALE,
+        y1: (sy0 + 2) * SCALE,
+        x2: (sx0 + 2) * SCALE,
+        y2: (sy0 + bodiceHeight - 2) * SCALE,
+        label: 'LENGTHWISE GRAIN',
+      },
+    });
+
     return {
       garmentType: garmentSpec.garmentType || 'gown',
-      pieces: [frontSkirtPiece, backSkirtPiece, gownBodiceFront],
+      pieces: [gownBodiceFront, gownBodiceBack, gownSideFront, frontSkirtPiece, backSkirtPiece],
     };
   }
 

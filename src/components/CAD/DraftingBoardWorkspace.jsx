@@ -51,6 +51,7 @@ import {
   ArrowUp,
   ArrowDown,
   RefreshCw,
+  RotateCcw,
   Sliders,
   Ruler,
   Palette,
@@ -70,12 +71,14 @@ import AdvancedTailorDrawer from './AdvancedTailorDrawer';
 import TailorRulerOverlay from './TailorRulerOverlay';
 import DraftingToolboxDrawer from './DraftingToolboxDrawer';
 import CuttingSheetItem from './CuttingSheetItem';
+import MagnifyingGlassLoupe from './MagnifyingGlassLoupe';
 import {
   TAILOR_RULERS_CATALOG,
   TAILOR_RULER_LIST,
   snapPointToActiveRuler,
   getRulerPrimaryEdgeWorldPoints,
   constrainChalkToRulerDirection,
+  constrainDrawingToActiveRuler,
 } from './TailorRulersCatalog';
 import { DECONSTRUCT_BENCHMARK_SAMPLES } from '../../data/deconstructSamples';
 import { generatePattern } from '../../utils/patternEngine/patternRegistry';
@@ -999,6 +1002,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     setActiveSnapPoint(null);
   };
 
+  // Reset Zoom Action: Restores 100% (1.0 scale), resets pan coordinates to origin (0,0), and clears transient HUDs
+  const handleResetZoom = () => {
+    setZoom(1.0);
+    setPanOffset({ x: 0, y: 0 });
+    setCurrentStroke(null);
+    setActiveSnapPoint(null);
+    setSteadyStrokeHUD(null);
+    if (!['dart_marker', 'magnifier', 'eraser', 'seam_allowance'].includes(activeTool)) {
+      setLensState(null);
+    }
+  };
+
   const handleSnapSeamEdge = (points, rulerName = 'Ruler Edge') => {
     if (!points || points.length < 2) return;
     const currentLayer = ensureActiveLayer();
@@ -1271,7 +1286,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
     // TOOL: DART MARKER
     if (activeTool === 'dart_marker') {
-      // Place an anatomical dart apex with triangular legs
+      // Place an anatomical dart apex with triangular legs (Zoom-aware scale bound to pattern sheet 1:1)
       const dartStroke = {
         id: `dart_${Date.now()}`,
         tool: 'dart_marker',
@@ -1282,7 +1297,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           { x: x + 14, y: y + 54 },
         ],
         color: brushColor,
-        size: 2,
+        size: Math.max(1.5, Math.round((2 / Math.max(0.5, zoom)) * 10) / 10),
+        fontSize: 10,
+        createdZoom: zoom,
+        label: 'DART APEX',
       };
 
       setLayers((prev) =>
@@ -1299,12 +1317,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     let startY = y;
 
     // Track starting point for ruler direction projection
-    if (activeTool === 'chalk') {
-      chalkStartRef.current = { x, y };
-    }
+    chalkStartRef.current = { x, y };
 
-    // Ruler edge snapping (Chalk, scissors, seam allowance)
-    if (snappingEnabled && ['chalk', 'scissors', 'seam_allowance'].includes(activeTool)) {
+    // Active Ruler Constraint at pointer down (French Curve or Straight Ruler)
+    if (activeRulers.length > 0 && ['chalk', 'pen', 'scissors', 'seam_allowance'].includes(activeTool)) {
+      const targetRuler = activeRulers.find((r) => r.locked) || activeRulers.find((r) => r.id === selectedRulerId) || activeRulers[0];
+      if (targetRuler) {
+        const constrained = constrainDrawingToActiveRuler(x, y, x, y, targetRuler);
+        startX = constrained.x;
+        startY = constrained.y;
+        chalkStartRef.current = { x: constrained.x, y: constrained.y };
+      }
+    } else if (snappingEnabled && ['chalk', 'scissors', 'seam_allowance'].includes(activeTool)) {
       const constrained = getConstrainedCoords(x, y);
       if (constrained.snapped) {
         startX = constrained.x;
@@ -1329,7 +1353,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       setSteadyStrokeHUD(null);
     }
 
-    // Bold Concave Lens activation for Seam Allowance, Dart Marker, or Chalk with Ruler
+    // Precision Focus Loupe auto-activation on pointer down
     if (activeTool === 'seam_allowance') {
       setLensState({
         visible: true,
@@ -1341,23 +1365,39 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         angle: 0,
         label: '5/8" Broken Seam Guide (Steady)',
       });
-    } else if (activeTool === 'chalk') {
+    } else if (activeTool === 'eraser') {
+      setLensState({
+        visible: true,
+        x: startX,
+        y: startY,
+        screenX,
+        screenY,
+        tool: 'eraser',
+        label: 'Surgical Eraser (Focus Loupe)',
+      });
+    } else if (activeTool === 'chalk' || (activeTool === 'pen' && activeRulers.length > 0)) {
       const targetRuler = activeRulers.find((r) => r.locked) || activeRulers.find((r) => r.id === selectedRulerId) || activeRulers[0];
       if (targetRuler) {
+        const isCurve = targetRuler.type !== 'straightRuler';
         setLensState({
           visible: true,
           x: startX,
           y: startY,
           screenX,
           screenY,
-          tool: 'chalk',
+          tool: activeTool,
           angle: Math.round(targetRuler.rotation || 0),
-          label: `Straight Chalk Line (${Math.round(targetRuler.rotation || 0)}°)`,
+          label: isCurve ? `${targetRuler.name || 'French Curve'} Arc` : `Straight Ruler Edge (${Math.round(targetRuler.rotation || 0)}°)`,
         });
       }
     }
 
+    const isPen = activeTool === 'pen';
     const isSeam = activeTool === 'seam_allowance';
+    // Calibrate stroke thickness to canvas viewport zoom level so pen annotations and handwriting
+    // maintain exact 1:1 physical proportion to pattern sheet when zooming out
+    const calibratedStrokeSize = isSeam ? 2.5 : isPen ? Math.max(1, Math.round((brushSize / Math.max(0.5, zoom)) * 10) / 10) : brushSize;
+
     const newStroke = {
       id: `stroke_${Date.now()}`,
       tool: activeTool,
@@ -1365,7 +1405,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       dashed: isSeam,
       points: [{ x: startX, y: startY }],
       color: isSeam ? '#38bdf8' : activeTool === 'eraser' ? '#090d16' : brushColor,
-      size: isSeam ? 2.5 : brushSize,
+      size: calibratedStrokeSize,
+      createdZoom: zoom,
       opacity: brushOpacity,
       symmetry: symmetryEnabled,
       symmetryAxisX: symmetryAxisX,
@@ -1505,17 +1546,23 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       }
     }
 
-    // Dart Marker hover reticle lens
-    if (activeTool === 'dart_marker') {
+    // Auto-Activation of High-Precision Focus Loupe for precision tools on hover
+    if (['dart_marker', 'magnifier', 'eraser', 'seam_allowance'].includes(activeTool) && !isPointerDown) {
       setLensState({
         visible: true,
         x: Math.round(x),
         y: Math.round(y),
         screenX,
         screenY,
-        tool: 'dart_marker',
-        angle: 0,
-        label: 'Dart Apex Reticle (Click to Place)',
+        tool: activeTool,
+        label:
+          activeTool === 'dart_marker'
+            ? 'Dart Apex Reticle (Click to Place)'
+            : activeTool === 'eraser'
+            ? 'Surgical Eraser (Focus Loupe)'
+            : activeTool === 'seam_allowance'
+            ? '5/8" Broken Seam Guide'
+            : '2.5x Focus Loupe (Inspection)',
       });
     }
 
@@ -1524,25 +1571,27 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       let targetX = x;
       let targetY = y;
 
-      // 1. Chalk with Ruler: Strict Straight Line Direction Constraint & Collision Avoidance
-      if (currentStroke.tool === 'chalk' && activeRulers.length > 0) {
+      // 1. Drawing with Ruler: Strict Constraint along Straight Angle or French Curve Spline
+      if (activeRulers.length > 0 && ['chalk', 'pen', 'scissors', 'seam_allowance'].includes(currentStroke.tool)) {
         const targetRuler = activeRulers.find((r) => r.locked) || activeRulers.find((r) => r.id === selectedRulerId) || activeRulers[0];
         if (targetRuler) {
           const startPt = chalkStartRef.current || { x: currentStroke.points[0]?.x || x, y: currentStroke.points[0]?.y || y };
-          const constrained = constrainChalkToRulerDirection(x, y, startPt.x, startPt.y, targetRuler);
+          const constrained = constrainDrawingToActiveRuler(x, y, startPt.x, startPt.y, targetRuler);
           targetX = constrained.x;
           targetY = constrained.y;
 
-          // Bold Concave Lens showing exact drawing point and ruler direction
+          // High-precision Focus Loupe showing exact drawing point and ruler curve/straight orientation
           setLensState({
             visible: true,
             x: targetX,
             y: targetY,
             screenX,
             screenY,
-            tool: 'chalk',
+            tool: currentStroke.tool,
             angle: constrained.angle,
-            label: `Straight Chalk Line (${constrained.angle}°)`,
+            label: constrained.isCurve
+              ? `${constrained.rulerName || 'French Curve'} Arc (${constrained.angle}°)`
+              : `Straight Ruler Edge (${constrained.angle}°)`,
           });
         }
       } else if (snappingEnabled && ['chalk', 'scissors', 'seam_allowance'].includes(currentStroke.tool)) {
@@ -1580,7 +1629,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           radius: lvl.radius,
         });
 
-        // Bold Concave Lens for Seam Allowance tool
+        // Bold Focus Loupe for Seam Allowance tool
         if (currentStroke.tool === 'seam_allowance') {
           setLensState({
             visible: true,
@@ -1595,6 +1644,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         }
       } else {
         setSteadyStrokeHUD(null);
+      }
+
+      // Focus Loupe for surgical Eraser while dragging
+      if (currentStroke.tool === 'eraser') {
+        setLensState({
+          visible: true,
+          x: strokeX,
+          y: strokeY,
+          screenX,
+          screenY,
+          tool: 'eraser',
+          label: 'Surgical Eraser (Focus Loupe)',
+        });
       }
 
       setCurrentStroke((prev) => {
@@ -1617,7 +1679,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     setIsPointerDown(false);
     setIsDraggingMirrorAxis(false);
     setSteadyStrokeHUD(null);
-    if (activeTool !== 'dart_marker') {
+    if (!['dart_marker', 'magnifier', 'eraser', 'seam_allowance'].includes(activeTool)) {
       setLensState(null);
     }
     movingPieceRef.current = { startX: 0, startY: 0, initialX: 0, initialY: 0, layerId: null, pieceId: null, sheetId: null };
@@ -2216,9 +2278,30 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               className={`p-2 rounded-xl text-xs transition-all ${
                 activeTool === 'eraser' ? 'bg-amber-500 text-slate-950 font-bold shadow-gold-sm' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
               }`}
-              title="Eraser"
+              title="Eraser (Surgical Focus Loupe)"
             >
               <Eraser className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTool('magnifier');
+                setLensState({
+                  visible: true,
+                  x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
+                  y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
+                  screenX: cursorPos.x || 500,
+                  screenY: cursorPos.y || 400,
+                  tool: 'magnifier',
+                  label: '2.5x Focus Loupe',
+                });
+              }}
+              className={`p-2 rounded-xl text-xs transition-all ${
+                activeTool === 'magnifier' ? 'bg-amber-400 text-slate-950 font-bold shadow-gold-sm' : 'text-amber-400/80 hover:bg-slate-800 hover:text-amber-300'
+              }`}
+              title="Precision Loupe (2x/3x Focus Magnifying Glass with Reticle & Dynamic Zoom)"
+            >
+              <ZoomIn className="w-4 h-4" />
             </button>
 
             <div className="w-full h-px bg-slate-800 my-1" />
@@ -2408,10 +2491,35 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                     ? 'bg-amber-500 text-slate-950 font-bold shadow-gold-sm'
                     : 'bg-slate-800/60 hover:bg-slate-800 text-slate-300'
                 }`}
-                title="Eraser: Remove strokes and annotations"
+                title="Eraser: Remove strokes with surgical 2.5x focus loupe"
               >
                 <Eraser className="w-3.5 h-3.5" />
                 <span>Eraser</span>
+              </button>
+
+              {/* Precision Loupe / Magnifying Glass */}
+              <button
+                onClick={() => {
+                  setActiveTool('magnifier');
+                  setLensState({
+                    visible: true,
+                    x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
+                    y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
+                    screenX: cursorPos.x || 500,
+                    screenY: cursorPos.y || 400,
+                    tool: 'magnifier',
+                    label: '2.5x Focus Loupe',
+                  });
+                }}
+                className={`flex items-center gap-2 p-2 rounded-xl text-xs transition-all font-medium ${
+                  activeTool === 'magnifier'
+                    ? 'bg-amber-400 text-slate-950 font-bold shadow-gold-sm'
+                    : 'bg-slate-800/60 hover:bg-slate-800 text-amber-300'
+                }`}
+                title="Precision Loupe: 2x/3x Focus Magnifier with Reticle & Dynamic Zoom anywhere on canvas"
+              >
+                <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
+                <span>Focus Loupe</span>
               </button>
             </div>
 
@@ -4119,6 +4227,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             isSelected={selectedRulerId === ruler.id}
             zoom={zoom}
             panOffset={panOffset}
+            isDrawing={isPointerDown}
             onSelect={() => setSelectedRulerId(ruler.id)}
             onSelectRuler={(id) => setSelectedRulerId(id)}
             onUpdate={(updates) => handleUpdateRuler(ruler.id, updates)}
@@ -4200,17 +4309,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             4X
           </button>
 
-          {/* 100% Reset / Fit */}
+          {/* Reset Zoom & Origin (0,0) Button */}
           <button
-            onClick={() => setZoom(1.0)}
-            className={`px-2 py-1 text-[11px] font-mono font-bold rounded-xl transition-all border ${
-              zoom === 1.0
-                ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                : 'bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-slate-700/50'
+            onClick={handleResetZoom}
+            className={`flex items-center gap-1 px-2 py-1 text-[11px] font-mono font-bold rounded-xl transition-all border ${
+              zoom === 1.0 && panOffset.x === 0 && panOffset.y === 0
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                : 'bg-slate-800/60 hover:bg-amber-500 hover:text-slate-950 text-slate-200 border-slate-700/60 hover:border-amber-400'
             }`}
-            title="Reset Zoom to 100% (1:1 CAD scale)"
+            title="Reset Zoom: Restores 100% 1:1 CAD scale, resets pan coordinates to (0,0), and clears transient artifacts"
           >
-            100%
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Zoom</span>
           </button>
 
           {/* Center Pan Button */}
@@ -4273,81 +4383,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         )}
 
         {/* ======================================================================= */}
-        {/* BOLD CONCAVE OPTICAL MAGNIFIER LENS HUD (Seam Allowance, Dart, Chalk)  */}
+        {/* HIGH-PRECISION TRUE MAGNIFYING GLASS (2X/3X VECTOR FOCUS ZOOM LOUPE)    */}
         {/* ======================================================================= */}
-        {lensState && lensState.visible && (
-          <div
-            className="fixed pointer-events-none z-50 select-none transition-all duration-75 ease-out"
-            style={{
-              left: `${Math.min(window.innerWidth - 180, Math.max(20, (lensState.screenX || 200) + 40))}px`,
-              top: `${Math.min(window.innerHeight - 200, Math.max(70, (lensState.screenY || 200) - 150))}px`,
-            }}
-          >
-            {/* Bold Concave Optical Glass Lens Circle */}
-            <div className="relative w-36 h-36 rounded-full border-4 border-amber-400/90 shadow-[0_0_32px_rgba(245,158,11,0.5),inset_0_0_24px_rgba(0,0,0,0.95)] flex items-center justify-center overflow-hidden bg-slate-950/90 backdrop-blur-md">
-              {/* Concave Glass Reflection & Depth Gradient */}
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  background:
-                    'radial-gradient(circle at 45% 45%, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.05) 30%, rgba(15,23,42,0.65) 65%, rgba(2,6,23,0.98) 100%)',
-                }}
-              />
-
-              {/* Optical Millimeter Tick Ring */}
-              <div className="absolute inset-1.5 rounded-full border border-dashed border-amber-400/40 opacity-70" />
-              <div className="absolute inset-4 rounded-full border border-slate-700/60" />
-              <div className="absolute inset-8 rounded-full border border-slate-800/80" />
-
-              {/* High-Precision Crosshair Reticle Lines */}
-              <div className="absolute w-full h-[1px] bg-amber-400/50" />
-              <div className="absolute h-full w-[1px] bg-amber-400/50" />
-
-              {/* Directional Alignment Compass Needle / Arrow */}
-              <div
-                className="absolute w-full h-full flex items-center justify-center transition-transform duration-75"
-                style={{ transform: `rotate(${lensState.angle || 0}deg)` }}
-              >
-                <div className="w-1 h-14 bg-gradient-to-t from-transparent via-amber-400 to-amber-300 rounded-full shadow-[0_0_8px_#f59e0b] -translate-y-4" />
-                <div className="absolute top-2 text-[8px] font-mono font-black text-amber-300 bg-slate-950/90 px-1 rounded border border-amber-400/60 shadow">
-                  ▲
-                </div>
-              </div>
-
-              {/* Central Glowing Reticle Pip */}
-              <div className="relative z-10 flex flex-col items-center justify-center">
-                <div className="w-3 h-3 rounded-full border-2 border-amber-300 bg-amber-400/40 shadow-[0_0_10px_#f59e0b] animate-pulse" />
-                <div className="w-1 h-1 rounded-full bg-white" />
-              </div>
-
-              {/* Broken Line Preview for Seam Allowance */}
-              {lensState.tool === 'seam_allowance' && (
-                <div className="absolute bottom-3 text-[9px] font-mono font-bold text-sky-300 tracking-widest bg-slate-950/90 px-2 py-0.5 rounded border border-sky-400/50 shadow">
-                  - - - 5/8" - - -
-                </div>
-              )}
-            </div>
-
-            {/* Attached Precision Readout Badge */}
-            <div className="mt-2 bg-[#090e1a]/95 backdrop-blur-md border border-amber-400/60 rounded-xl px-3 py-1.5 shadow-2xl text-center min-w-[150px]">
-              <div className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center justify-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>{lensState.label || 'OPTICAL LENS'}</span>
-              </div>
-              <div className="text-[10px] font-mono text-slate-300 flex items-center justify-center gap-2 mt-0.5">
-                <span>X: {Math.round(lensState.x)}</span>
-                <span className="text-slate-600">|</span>
-                <span>Y: {Math.round(lensState.y)}</span>
-                {lensState.angle !== undefined && (
-                  <>
-                    <span className="text-slate-600">|</span>
-                    <span className="text-amber-400 font-bold">{lensState.angle}°</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <MagnifyingGlassLoupe
+          lensState={lensState}
+          layers={layers}
+          cuttingSheets={cuttingSheets}
+          activeRulers={activeRulers}
+          brushSize={brushSize}
+        />
 
         {/* ======================================================================= */}
         {/* PERSISTENT ZOOM-SAFE FLOATING TOGGLES DOCK                              */}

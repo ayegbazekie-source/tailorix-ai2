@@ -258,64 +258,16 @@ export function getRulerPath(tool) {
 }
 
 /**
- * Constrains chalk drawing to strictly follow the orientation/tangent direction of an active ruler
- * and prevents penetrating across or into the physical ruler body.
+ * Get physical width and height for a ruler based on catalog and length options
  */
-export function constrainChalkToRulerDirection(rawX, rawY, startX, startY, ruler) {
-  if (!ruler) {
-    return { x: rawX, y: rawY, angle: 0, isConstrained: false };
-  }
-
-  const rad = ((ruler.rotation || 0) * Math.PI) / 180;
-  const dirX = Math.cos(rad);
-  const dirY = Math.sin(rad);
-
-  // Vector from stroke start to current pointer
-  const dx = rawX - startX;
-  const dy = rawY - startY;
-
-  // Project along ruler direction vector
-  const proj = dx * dirX + dy * dirY;
-
-  let constrainedX = startX + proj * dirX;
-  let constrainedY = startY + proj * dirY;
-
-  // Verify non-intersection with ruler body:
-  // Convert start point and constrained point to ruler local space
-  const localStart = worldToRulerLocal(startX, startY, ruler);
-  const localCurrent = worldToRulerLocal(constrainedX, constrainedY, ruler);
-
-  const catalog = TAILOR_RULERS_CATALOG[ruler.type];
-  const rw = catalog?.width || 400;
-  const rh = catalog?.height || 60;
-
-  // If start point was on one side of the ruler (e.g. above/outside top edge or below/outside bottom edge)
-  // ensure the chalk line never crosses into, over, or under the ruler
-  let clampedLocalY = localCurrent.y;
-  if (localStart.y < 0) {
-    // Started above ruler: keep strictly above
-    clampedLocalY = Math.min(-2, localCurrent.y);
-  } else if (localStart.y > rh) {
-    // Started below ruler: keep strictly below
-    clampedLocalY = Math.max(rh + 2, localCurrent.y);
-  } else {
-    // If started inside or directly on edge, clamp to nearest outside edge
-    clampedLocalY = localStart.y < rh / 2 ? -2 : rh + 2;
-  }
-
-  // If the clamped local Y differs, convert back to world coordinates
-  if (clampedLocalY !== localCurrent.y) {
-    const safeWorld = rulerLocalToWorld(localCurrent.x, clampedLocalY, ruler);
-    constrainedX = safeWorld.x;
-    constrainedY = safeWorld.y;
-  }
-
-  return {
-    x: Math.round(constrainedX * 10) / 10,
-    y: Math.round(constrainedY * 10) / 10,
-    angle: Math.round(ruler.rotation || 0),
-    isConstrained: true,
-  };
+export function getRulerDimensions(ruler) {
+  if (!ruler) return { width: 540, height: 60 };
+  const catalog = TAILOR_RULERS_CATALOG[ruler.type] || TAILOR_RULERS_CATALOG.straightRuler;
+  const isStraight = ruler.type === 'straightRuler';
+  const rulerLength = ruler.lengthOption || catalog.defaultLength || 18;
+  const width = isStraight ? (rulerLength === 36 ? 840 : 540) : catalog.width;
+  const height = isStraight ? 60 : catalog.height;
+  return { width, height };
 }
 
 /**
@@ -326,13 +278,13 @@ function projectPointOntoSegment(px, py, p1, p2) {
   const dy = p2.y - p1.y;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) {
-    return { x: p1.x, y: p1.y, distSq: (px - p1.x) ** 2 + (py - p1.y) ** 2 };
+    return { x: p1.x, y: p1.y, distSq: (px - p1.x) ** 2 + (py - p1.y) ** 2, t: 0 };
   }
   const t = Math.max(0, Math.min(1, ((px - p1.x) * dx + (py - p1.y) * dy) / lenSq));
   const projX = p1.x + t * dx;
   const projY = p1.y + t * dy;
   const distSq = (px - projX) ** 2 + (py - projY) ** 2;
-  return { x: projX, y: projY, distSq };
+  return { x: projX, y: projY, distSq, t, p1, p2 };
 }
 
 /**
@@ -340,66 +292,149 @@ function projectPointOntoSegment(px, py, p1, p2) {
  */
 export function projectPointOntoRulerEdge(localX, localY, edgePoints) {
   if (!edgePoints || edgePoints.length < 2) {
-    return { x: localX, y: localY, dist: Infinity };
+    return { x: localX, y: localY, dist: Infinity, tangentAngle: 0 };
   }
 
   let minDistSq = Infinity;
   let bestProj = { x: localX, y: localY };
+  let bestSeg = { p1: edgePoints[0], p2: edgePoints[1] };
 
   for (let i = 0; i < edgePoints.length - 1; i++) {
     const p1 = edgePoints[i];
     const p2 = edgePoints[i + 1];
-    const { x, y, distSq } = projectPointOntoSegment(localX, localY, p1, p2);
-    if (distSq < minDistSq) {
-      minDistSq = distSq;
-      bestProj = { x, y };
+    const res = projectPointOntoSegment(localX, localY, p1, p2);
+    if (res.distSq < minDistSq) {
+      minDistSq = res.distSq;
+      bestProj = { x: res.x, y: res.y };
+      bestSeg = { p1, p2 };
     }
   }
 
-  // Also test closing segment if loop
-  const pFirst = edgePoints[0];
-  const pLast = edgePoints[edgePoints.length - 1];
-  const { x, y, distSq } = projectPointOntoSegment(localX, localY, pLast, pFirst);
-  if (distSq < minDistSq) {
-    minDistSq = distSq;
-    bestProj = { x, y };
-  }
+  const segAngle = Math.atan2(bestSeg.p2.y - bestSeg.p1.y, bestSeg.p2.x - bestSeg.p1.x) * (180 / Math.PI);
 
-  return { x: bestProj.x, y: bestProj.y, dist: Math.sqrt(minDistSq) };
+  return {
+    x: bestProj.x,
+    y: bestProj.y,
+    dist: Math.sqrt(minDistSq),
+    tangentAngle: Math.round(segAngle),
+  };
 }
 
 /**
  * Coordinate Transformation: Canvas World Space -> Ruler Local Space
+ * Correctly accounts for SVG center translation translate(-50%, -50%)
  */
 export function worldToRulerLocal(wx, wy, ruler) {
+  const { width, height } = getRulerDimensions(ruler);
   const dx = wx - ruler.x;
   const dy = wy - ruler.y;
-  const rad = (-ruler.rotation * Math.PI) / 180;
+  const rad = (-(ruler.rotation || 0) * Math.PI) / 180;
   const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
   const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
   const scale = ruler.scale || 1;
   const sx = rx / scale;
   const sy = ry / scale;
-  const lx = ruler.flipX ? -sx : sx;
-  const ly = ruler.flipY ? -sy : sy;
+  const fx = ruler.flipX ? -sx : sx;
+  const fy = ruler.flipY ? -sy : sy;
+  const lx = fx + width / 2;
+  const ly = fy + height / 2;
   return { x: lx, y: ly };
 }
 
 /**
  * Coordinate Transformation: Ruler Local Space -> Canvas World Space
+ * Correctly converts SVG local coordinates relative to the centered ruler overlay
  */
 export function rulerLocalToWorld(lx, ly, ruler) {
-  const fx = ruler.flipX ? -lx : lx;
-  const fy = ruler.flipY ? -ly : ly;
-  const scale = ruler.scale || 1;
-  const sx = fx * scale;
-  const sy = fy * scale;
-  const rad = (ruler.rotation * Math.PI) / 180;
+  const { width, height } = getRulerDimensions(ruler);
+  const fx = lx - width / 2;
+  const fy = ly - height / 2;
+  const sx = (ruler.flipX ? -fx : fx) * (ruler.scale || 1);
+  const sy = (ruler.flipY ? -fy : fy) * (ruler.scale || 1);
+  const rad = ((ruler.rotation || 0) * Math.PI) / 180;
   const rx = sx * Math.cos(rad) - sy * Math.sin(rad);
   const ry = sx * Math.sin(rad) + sy * Math.cos(rad);
   const wx = rx + ruler.x;
   const wy = ry + ruler.y;
   return { x: wx, y: wy };
+}
+
+/**
+ * Precision Manual Drawing Constraint:
+ * Clamps user drawing coordinates strictly to the active ruler or French curve geometry.
+ *  - French Curve / Curved Ruler: Projects pointer inputs onto the exact curved spline boundary (NO straight lines)
+ *  - Straight Ruler: Constrains pointer strictly along the ruler's angular direction and active edge
+ *  - Disallows stray lines or offsets regardless of screen position or zoom scale.
+ */
+export function constrainDrawingToActiveRuler(rawX, rawY, startX, startY, ruler) {
+  if (!ruler) {
+    return { x: rawX, y: rawY, angle: 0, isConstrained: false, isCurve: false };
+  }
+
+  const catalog = TAILOR_RULERS_CATALOG[ruler.type] || TAILOR_RULERS_CATALOG.straightRuler;
+  const isStraight = ruler.type === 'straightRuler';
+
+  if (!isStraight) {
+    // -----------------------------------------------------------------------
+    // FRENCH CURVE / CURVED RULER: STRICT CURVED SPLINE PROJECTION
+    // -----------------------------------------------------------------------
+    const localCurvePoints = catalog.primarySnapEdge
+      ? catalog.primarySnapEdge(ruler.lengthOption || catalog.defaultLength)
+      : (catalog.getEdgePoints ? catalog.getEdgePoints(ruler.lengthOption || catalog.defaultLength) : []);
+
+    if (localCurvePoints && localCurvePoints.length >= 2) {
+      const local = worldToRulerLocal(rawX, rawY, ruler);
+      const proj = projectPointOntoRulerEdge(local.x, local.y, localCurvePoints);
+      const worldPoint = rulerLocalToWorld(proj.x, proj.y, ruler);
+      
+      const worldAngle = Math.round(((proj.tangentAngle + (ruler.rotation || 0)) % 360 + 360) % 360);
+
+      return {
+        x: Math.round(worldPoint.x * 10) / 10,
+        y: Math.round(worldPoint.y * 10) / 10,
+        angle: worldAngle,
+        isConstrained: true,
+        isCurve: true,
+        rulerName: catalog.name,
+      };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // STRAIGHT RULER: STRICT ANGULAR DIRECTION CONSTRAINT ALONG ACTIVE EDGE
+  // -------------------------------------------------------------------------
+  const { width: rw, height: rh } = getRulerDimensions(ruler);
+  const localCurrent = worldToRulerLocal(rawX, rawY, ruler);
+  const localStart = startX != null && startY != null ? worldToRulerLocal(startX, startY, ruler) : localCurrent;
+
+  // Clamp along the ruler width (0 to rw)
+  const clampedX = Math.max(0, Math.min(rw, localCurrent.x));
+
+  // Determine top edge (ly = 0) vs bottom edge (ly = rh)
+  let targetEdgeY = 0;
+  if (localStart.y >= rh / 2) {
+    targetEdgeY = rh;
+  } else {
+    targetEdgeY = 0;
+  }
+
+  const worldEdge = rulerLocalToWorld(clampedX, targetEdgeY, ruler);
+
+  return {
+    x: Math.round(worldEdge.x * 10) / 10,
+    y: Math.round(worldEdge.y * 10) / 10,
+    angle: Math.round(ruler.rotation || 0),
+    isConstrained: true,
+    isCurve: false,
+    rulerName: catalog.name,
+  };
+}
+
+/**
+ * Backward-compatible alias for constrainDrawingToActiveRuler
+ */
+export function constrainChalkToRulerDirection(rawX, rawY, startX, startY, ruler) {
+  return constrainDrawingToActiveRuler(rawX, rawY, startX, startY, ruler);
 }
 
 /**

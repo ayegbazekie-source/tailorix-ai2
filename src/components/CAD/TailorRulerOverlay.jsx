@@ -43,12 +43,41 @@ export default function TailorRulerOverlay({
   panOffset = { x: 0, y: 0 },
   activeSnapPoint = null,
   tapeMeasureDistance = null,
+  isDrawing = false,
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
   const [isControlsExpanded, setIsControlsExpanded] = useState(false);
   const [traceLengthMode, setTraceLengthMode] = useState('full'); // 'full' | 'tape' | number (inches)
   const carouselRef = useRef(null);
+
+  // 10-Second Inactivity Auto-Hide Timer for Control Overlays & Yellow Status Banner
+  const [isOverlayVisible, setIsOverlayVisible] = useState(true);
+  const autoHideTimerRef = useRef(null);
+
+  const resetAutoHideTimer = () => {
+    if (autoHideTimerRef.current) {
+      clearTimeout(autoHideTimerRef.current);
+    }
+    setIsOverlayVisible(true);
+    autoHideTimerRef.current = setTimeout(() => {
+      setIsOverlayVisible(false);
+    }, 10000); // 10-second inactivity timeout
+  };
+
+  useEffect(() => {
+    if (isSelected) {
+      resetAutoHideTimer();
+    }
+    return () => {
+      if (autoHideTimerRef.current) {
+        clearTimeout(autoHideTimerRef.current);
+      }
+    };
+  }, [isSelected, ruler.id, ruler.rotation, ruler.scale, ruler.x, ruler.y]);
+
+  // When drawing or after 10s inactivity, hide overlays
+  const effectiveOverlayVisible = isOverlayVisible && !isDrawing;
 
   // Move mode is active if explicitly set or if the ruler is not locked
   const isMove = ruler.isMoveMode !== undefined ? ruler.isMoveMode : !ruler.locked;
@@ -330,9 +359,14 @@ export default function TailorRulerOverlay({
       onClick={(e) => {
         e.stopPropagation();
         selectRuler(ruler.id);
+        resetAutoHideTimer();
+      }}
+      onPointerDown={() => {
+        resetAutoHideTimer();
       }}
       onDoubleClick={() => {
         updateRuler(ruler.id, { isMoveMode: true, locked: false });
+        resetAutoHideTimer();
       }}
       id={`tailor-ruler-${ruler.id}`}
     >
@@ -340,57 +374,70 @@ export default function TailorRulerOverlay({
       {/* 1. ATTACHED QUICK ACTION BAR (Pinned above/below ruler with Carousel Slide) */}
       {/* ========================================================================= */}
       {isSelected && (
-        !isControlsExpanded ? (
-          /* Sleek Collapsed Badge: Compact & Unobtrusive to keep workspace clear */
-          <div
-            className={`absolute ${isNearTop ? 'top-full mt-3' : '-top-12'} left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-[#090d16]/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-500/60 shadow-xl text-slate-100 ring-1 ring-white/10 select-none whitespace-nowrap`}
-            style={{
-              transform: `scale(${ruler.flipX ? -1 : 1}, ${ruler.flipY ? -1 : 1})`,
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-800/90 rounded-full text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-              <span className="truncate max-w-[120px]">{catalog.name}</span>
-              <span className="text-slate-400 font-mono text-[9px]">{Math.round(ruler.rotation || 0)}°</span>
+        <div className={`transition-opacity duration-500 ease-out ${effectiveOverlayVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          {!isControlsExpanded ? (
+            /* Sleek Collapsed Badge: Compact & Unobtrusive to keep workspace clear */
+            <div
+              className={`absolute ${isNearTop ? 'top-full mt-3' : '-top-12'} left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-[#090d16]/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-amber-500/60 shadow-xl text-slate-100 ring-1 ring-white/10 select-none whitespace-nowrap`}
+              style={{
+                transform: `scale(${ruler.flipX ? -1 : 1}, ${ruler.flipY ? -1 : 1})`,
+              }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                resetAutoHideTimer();
+              }}
+            >
+              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-800/90 rounded-full text-[10px] font-bold text-amber-300 uppercase tracking-wider">
+                <span className="truncate max-w-[120px]">{catalog.name}</span>
+                <span className="text-slate-400 font-mono text-[9px]">{Math.round(ruler.rotation || 0)}°</span>
+              </div>
+
+              <button
+                onClick={() => {
+                  setIsControlsExpanded(true);
+                  resetAutoHideTimer();
+                }}
+                className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-400 hover:text-slate-950 text-amber-300 rounded-full text-[10px] font-bold transition-all flex items-center gap-1 border border-amber-500/40"
+                title="Expand Ruler Controls (Rotate, Nudge, Move Mode, Lock, Trace, Scale/Size)"
+              >
+                <Sliders className="w-3 h-3" />
+                <span>Controls</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+
+              <button
+                onClick={() => {
+                  handleToggleMoveMode();
+                  resetAutoHideTimer();
+                }}
+                className={`p-1 rounded-full text-[10px] transition-all ${
+                  isMove ? 'bg-amber-400 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title={isMove ? 'Move Mode Active (Drag to reposition)' : 'Click to enable Move Mode'}
+              >
+                <Move className="w-3 h-3" />
+              </button>
+
+              <button
+                onClick={() => removeRuler(ruler.id)}
+                className="p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-full transition-all"
+                title="Remove Ruler from Canvas"
+              >
+                <X className="w-3 h-3" />
+              </button>
             </div>
-
-            <button
-              onClick={() => setIsControlsExpanded(true)}
-              className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-400 hover:text-slate-950 text-amber-300 rounded-full text-[10px] font-bold transition-all flex items-center gap-1 border border-amber-500/40"
-              title="Expand Ruler Controls (Rotate, Nudge, Move Mode, Lock, Trace, Scale/Size)"
+          ) : (
+            /* Full Expanded Toolbar with Carousel Slide Track & Viewport-Safe Clamping */
+            <div
+              className={`absolute ${isNearTop ? 'top-full mt-3' : '-top-16'} left-1/2 -translate-x-1/2 z-50 flex items-center bg-[#090d16]/98 backdrop-blur-md px-1.5 py-1.5 rounded-2xl border border-amber-500/80 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none max-w-[min(520px,calc(100vw-36px))]`}
+              style={{
+                transform: `scale(${ruler.flipX ? -1 : 1}, ${ruler.flipY ? -1 : 1})`,
+              }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                resetAutoHideTimer();
+              }}
             >
-              <Sliders className="w-3 h-3" />
-              <span>Controls</span>
-              <ChevronDown className="w-3 h-3" />
-            </button>
-
-            <button
-              onClick={handleToggleMoveMode}
-              className={`p-1 rounded-full text-[10px] transition-all ${
-                isMove ? 'bg-amber-400 text-slate-950' : 'text-slate-400 hover:text-white'
-              }`}
-              title={isMove ? 'Move Mode Active (Drag to reposition)' : 'Click to enable Move Mode'}
-            >
-              <Move className="w-3 h-3" />
-            </button>
-
-            <button
-              onClick={() => removeRuler(ruler.id)}
-              className="p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-full transition-all"
-              title="Remove Ruler from Canvas"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        ) : (
-          /* Full Expanded Toolbar with Carousel Slide Track & Viewport-Safe Clamping */
-          <div
-            className={`absolute ${isNearTop ? 'top-full mt-3' : '-top-16'} left-1/2 -translate-x-1/2 z-50 flex items-center bg-[#090d16]/98 backdrop-blur-md px-1.5 py-1.5 rounded-2xl border border-amber-500/80 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none max-w-[min(520px,calc(100vw-36px))]`}
-            style={{
-              transform: `scale(${ruler.flipX ? -1 : 1}, ${ruler.flipY ? -1 : 1})`,
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             {/* Carousel Slide: Scroll Left Button */}
             <button
               onClick={() => handleCarouselScroll('left')}
@@ -695,7 +742,8 @@ export default function TailorRulerOverlay({
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
-        )
+        )}
+        </div>
       )}
 
       {/* ========================================================================= */}
@@ -709,26 +757,36 @@ export default function TailorRulerOverlay({
             ? 'cursor-grabbing'
             : 'cursor-grab'
         } ${isMove ? 'ring-2 ring-amber-400/80 rounded-lg' : ''}`}
-        onPointerDown={(e) => handleStartDrag(e, false)}
+        onPointerDown={(e) => {
+          resetAutoHideTimer();
+          handleStartDrag(e, false);
+        }}
       >
-        {/* Status Indicator Banner */}
-        {ruler.locked && !isMove ? (
-          <div className="absolute top-2 left-3 z-40 flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/95 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow-md pointer-events-none border border-amber-300 backdrop-blur-xs select-none">
-            <Lock className="w-2.5 h-2.5 stroke-[3]" />
-            <span>Position Locked • Trace Straight Lines Along Edge</span>
-          </div>
-        ) : isMove ? (
-          <div className="absolute top-2 left-3 z-40 flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow-md pointer-events-none border border-amber-300 select-none">
-            <Move className="w-2.5 h-2.5 stroke-[3]" />
-            <span>Move Mode Active • Drag Freely Anywhere</span>
-          </div>
-        ) : null}
+        {/* Status Indicator Banner (Auto-Hides after 10s inactivity or while drawing) */}
+        <div className={`transition-opacity duration-500 ease-out ${effectiveOverlayVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          {ruler.locked && !isMove ? (
+            <div className="absolute top-2 left-3 z-40 flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/95 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow-md pointer-events-none border border-amber-300 backdrop-blur-xs select-none">
+              <Lock className="w-2.5 h-2.5 stroke-[3]" />
+              <span>Position Locked • Trace Straight Lines Along Edge</span>
+            </div>
+          ) : isMove ? (
+            <div className="absolute top-2 left-3 z-40 flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow-md pointer-events-none border border-amber-300 select-none">
+              <Move className="w-2.5 h-2.5 stroke-[3]" />
+              <span>Move Mode Active • Drag Freely Anywhere</span>
+            </div>
+          ) : null}
+        </div>
 
         {/* Floating Center Move Disc (Prominent Tactile Drag Handle) */}
         {(isMove || isSelected) && (
           <div
-            onPointerDown={(e) => handleStartDrag(e, true)}
-            className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full border-2 text-amber-300 flex items-center justify-center cursor-move shadow-2xl hover:scale-110 active:scale-95 transition-transform ${
+            onPointerDown={(e) => {
+              resetAutoHideTimer();
+              handleStartDrag(e, true);
+            }}
+            className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full border-2 text-amber-300 flex items-center justify-center cursor-move shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 ${
+              effectiveOverlayVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            } ${
               isMove
                 ? 'bg-slate-950/95 border-amber-400 ring-4 ring-amber-400/30'
                 : 'bg-slate-900/90 border-slate-600 hover:border-amber-400 opacity-75 hover:opacity-100'

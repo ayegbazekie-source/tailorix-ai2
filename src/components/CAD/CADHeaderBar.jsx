@@ -34,14 +34,15 @@ export default function CADHeaderBar({
   onExportSVG = () => {},
   onExportDXF = () => {},
   onExportPDF = () => {},
+  onOpenAdvancedOptions = () => {},
 }) {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   const viewModes = [
-    { id: 'cad', label: 'CAD Canvas', icon: Layers },
-    { id: 'grading', label: 'Grading Nest', icon: SlidersHorizontal },
-    { id: 'marker', label: 'Fabric Marker', icon: FileText },
+    { id: 'cad', label: 'Drafting Board', icon: Layers },
+    { id: 'grading', label: 'Size Grading', icon: SlidersHorizontal },
+    { id: 'marker', label: 'Cutting Layout', icon: FileText },
     { id: '3d', label: '3D Fit', icon: Box },
   ];
 
@@ -156,29 +157,33 @@ export default function CADHeaderBar({
 
           {showExportMenu && (
             <div
-              className="absolute right-0 mt-1.5 w-52 bg-[#17181A] border border-[#2D2E32] rounded-xl shadow-floating py-1.5 z-50 text-xs font-medium animate-in fade-in zoom-in-95 duration-100"
+              className="absolute right-0 mt-1.5 w-56 bg-[#17181A] border border-[#2D2E32] rounded-xl shadow-floating py-1.5 z-50 text-xs font-medium animate-in fade-in zoom-in-95 duration-100"
               onClick={() => setShowExportMenu(false)}
             >
               <button
                 onClick={onExportSVG}
                 className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
               >
-                <span>Production Vector SVG</span>
+                <span>Save Pattern Outline</span>
                 <span className="text-[10px] text-[#C5A059] font-mono">.svg</span>
-              </button>
-              <button
-                onClick={onExportDXF}
-                className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
-              >
-                <span>AutoCAD / AAMA DXF</span>
-                <span className="text-[10px] text-[#8A8B93] font-mono">.dxf</span>
               </button>
               <button
                 onClick={onExportPDF}
                 className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#EDEDF0] flex items-center justify-between transition-colors"
               >
-                <span>Tiled 1:1 Print Sheet</span>
+                <span>Print Pattern Sheets (1:1)</span>
                 <span className="text-[10px] text-[#8A8B93] font-mono">.pdf</span>
+              </button>
+              <div className="my-1 border-t border-[#26282E]" />
+              <button
+                onClick={() => {
+                  setShowExportMenu(false);
+                  onOpenAdvancedOptions();
+                }}
+                className="w-full text-left px-3.5 py-2 hover:bg-[#202226] text-[#E5C07B] flex items-center justify-between transition-colors"
+              >
+                <span>Advanced Tailor Options...</span>
+                <span className="text-[10px] text-[#8A8B93] font-mono">DXF/Nodes</span>
               </button>
             </div>
           )}

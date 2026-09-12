@@ -145,9 +145,26 @@ export function renderPieceToSvgPath(piece) {
  * Calculates the exact 2D bounding box of a structured piece.
  */
 export function calculatePieceBounds(piece) {
-  const points = piece.points || [];
+  if (piece?.bounds && typeof piece.bounds.width === 'number' && typeof piece.bounds.height === 'number') {
+    const minX = piece.bounds.minX ?? 0;
+    const minY = piece.bounds.minY ?? 0;
+    const width = Math.max(piece.bounds.width, 1);
+    const height = Math.max(piece.bounds.height, 1);
+    return {
+      minX,
+      minY,
+      maxX: minX + width,
+      maxY: minY + height,
+      width,
+      height,
+      centerX: minX + width / 2,
+      centerY: minY + height / 2,
+    };
+  }
+
+  const points = piece?.points || [];
   if (points.length === 0) {
-    return { minX: 0, minY: 0, maxX: 100, maxY: 100, width: 100, height: 100 };
+    return { minX: 0, minY: 0, maxX: 100, maxY: 100, width: 100, height: 100, centerX: 50, centerY: 50 };
   }
 
   let minX = Infinity;

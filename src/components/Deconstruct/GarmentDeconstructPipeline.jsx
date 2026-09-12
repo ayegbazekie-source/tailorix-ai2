@@ -215,8 +215,8 @@ export default function GarmentDeconstructPipeline() {
       patternPieces: patternPieces.map((piece) => ({
         id: piece.id,
         name: piece.name,
-        cutQuantity: piece.cutQuantity?.includes('1') ? 1 : 2,
-        cutQuantityLabel: piece.cutQuantity || (piece.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)'),
+        cutQuantity: typeof piece.cutQuantity === 'number' ? piece.cutQuantity : (String(piece.cutQuantity || '').includes('1') ? 1 : 2),
+        cutQuantityLabel: typeof piece.cutQuantity === 'string' ? piece.cutQuantity : (piece.cutQuantityLabel || (piece.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)')),
         svgPath: piece.path,
         isFold: Boolean(piece.onFold),
         seamAllowance: piece.seamAllowance ?? 0.5,
@@ -237,7 +237,7 @@ export default function GarmentDeconstructPipeline() {
       console.warn('Storage payload error:', e);
     }
 
-    navigate('/studio', { state: { importedPayload: payload } });
+    navigate('/cad', { state: { importedPayload: payload } });
   };
 
   return (
@@ -883,7 +883,7 @@ export default function GarmentDeconstructPipeline() {
               <div className="flex items-center justify-between pb-2 border-b border-[#222427]">
                 <span className="text-xs text-[#8A8B93]">Total Cuts Required:</span>
                 <span className="text-xs font-mono font-semibold text-[#EDEDF0]">
-                  {patternPieces.reduce((acc, p) => acc + (p.cutQuantity?.includes('1') ? 1 : 2), 0)} Cut Pieces
+                  {patternPieces.reduce((acc, p) => acc + (typeof p.cutQuantity === 'number' ? p.cutQuantity : (String(p.cutQuantity || '').includes('1') ? 1 : 2)), 0)} Cut Pieces
                 </span>
               </div>
 

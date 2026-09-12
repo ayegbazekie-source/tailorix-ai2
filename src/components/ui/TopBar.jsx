@@ -7,6 +7,7 @@ import {
   Folder,
   Sparkles,
   Palette,
+  PenTool,
   Users,
   User,
   Plus,
@@ -24,7 +25,9 @@ export function TopBar() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showDraftingMenu, setShowDraftingMenu] = useState(false);
   const profileRef = useRef(null);
+  const draftingRef = useRef(null);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -32,18 +35,21 @@ export function TopBar() {
       if (profileRef.current && !profileRef.current.contains(e.target)) {
         setShowProfileMenu(false);
       }
+      if (draftingRef.current && !draftingRef.current.contains(e.target)) {
+        setShowDraftingMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const navItems = [
-    { to: '/cad', label: 'Workbench', icon: Scissors },
-    { to: '/deconstruct', label: 'Deconstruct', icon: ScanLine },
-    { to: '/templates', label: 'Templates', icon: BookOpen },
+  const isDraftingActive = location.pathname === '/cad' || location.pathname === '/studio';
+
+  const otherNavItems = [
+    { to: '/deconstruct', label: 'Photo to Pattern', icon: ScanLine },
+    { to: '/templates', label: 'Ready-Made Outlines', icon: BookOpen },
     { to: '/projects', label: 'Projects', icon: Folder },
     { to: '/tutor', label: 'AI Atelier', icon: Sparkles },
-    { to: '/studio', label: 'Studio', icon: Palette },
     { to: '/community', label: 'Community', icon: Users },
   ];
 
@@ -69,7 +75,71 @@ export function TopBar() {
 
         {/* Desktop Workspace Navigation */}
         <nav className="hidden md:flex items-center gap-1">
-          {navItems.map((item) => {
+          {/* Unified Drafting Board Dropdown */}
+          <div className="relative" ref={draftingRef}>
+            <button
+              onClick={() => setShowDraftingMenu(!showDraftingMenu)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                isDraftingActive
+                  ? 'bg-[#C5A059]/12 text-[#E5C07B] border border-[#C5A059]/30 font-semibold shadow-gold-sm'
+                  : 'text-[#9E9EA7] hover:text-[#F5F5F7] hover:bg-[#1A1B1E] border border-transparent'
+              }`}
+            >
+              <Scissors className={`w-3.5 h-3.5 ${isDraftingActive ? 'text-[#E5C07B]' : 'text-[#8A8B93]'}`} />
+              <span>Drafting Board</span>
+              <ChevronDown className={`w-3 h-3 text-[#8A8B93] transition-transform ${showDraftingMenu ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showDraftingMenu && (
+              <div className="absolute left-0 mt-1.5 w-72 bg-[#161719] border border-[#2D2E32] rounded-xl shadow-floating py-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-3 py-1 border-b border-[#232427] text-[10px] font-bold uppercase tracking-wider text-[#8A8B93]">
+                  DRAFTING WORKSPACES
+                </div>
+
+                <NavLink
+                  to="/cad"
+                  onClick={() => setShowDraftingMenu(false)}
+                  className={({ isActive }) =>
+                    `flex items-start gap-2.5 px-3 py-2.5 transition-colors ${
+                      isActive ? 'bg-[#C5A059]/15 text-[#F5F5F7]' : 'text-[#D0D0D5] hover:bg-[#1D1F22]'
+                    }`
+                  }
+                >
+                  <div className="w-7 h-7 rounded-lg bg-[#C5A059]/20 text-[#E5C07B] flex items-center justify-center shrink-0 mt-0.5 border border-[#C5A059]/30">
+                    <PenTool className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#F5F5F7]">Pattern Drafting Board</div>
+                    <div className="text-[11px] text-[#8A8B93] leading-tight">
+                      Vector CAD drafting, sketchbook instruments, dart markers & DXF exports
+                    </div>
+                  </div>
+                </NavLink>
+
+                <NavLink
+                  to="/studio"
+                  onClick={() => setShowDraftingMenu(false)}
+                  className={({ isActive }) =>
+                    `flex items-start gap-2.5 px-3 py-2.5 transition-colors ${
+                      isActive ? 'bg-[#C5A059]/15 text-[#F5F5F7]' : 'text-[#D0D0D5] hover:bg-[#1D1F22]'
+                    }`
+                  }
+                >
+                  <div className="w-7 h-7 rounded-lg bg-rose-500/20 text-rose-300 flex items-center justify-center shrink-0 mt-0.5 border border-rose-500/30">
+                    <Scissors className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#F5F5F7]">Cutting Table</div>
+                    <div className="text-[11px] text-[#8A8B93] leading-tight">
+                      Fabric canvas, bodice pattern overlay, chalk tracing & scissors cutting
+                    </div>
+                  </div>
+                </NavLink>
+              </div>
+            )}
+          </div>
+
+          {otherNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.to;
             return (
@@ -97,7 +167,7 @@ export function TopBar() {
           className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#1D1F22] hover:bg-[#25282C] border border-[#2D2F33] text-xs font-medium text-[#EDEDF0] transition-colors"
         >
           <Plus className="w-3.5 h-3.5 text-[#C5A059]" />
-          <span>New Deconstruct</span>
+          <span>Photo to Pattern</span>
         </button>
 
         {/* User Account / Atelier Menu */}
@@ -147,7 +217,7 @@ export function TopBar() {
                   className="w-full px-4 py-2 text-left text-xs text-[#EDEDF0] hover:bg-[#1E2023] flex items-center gap-2"
                 >
                   <BookOpen className="w-3.5 h-3.5 text-[#8A8B93]" />
-                  Master Sloper Blocks
+                  Ready-Made Outlines
                 </button>
                 <button
                   onClick={() => {

@@ -118,8 +118,8 @@ function getSamplePatternSet(sampleId = 'sample_gown') {
     patternPieces: (pattern.pieces || []).map((p, idx) => ({
       id: p.id || `piece_${idx}`,
       name: p.name,
-      cutQuantity: p.cutQuantity?.includes('1') ? 1 : 2,
-      cutQuantityLabel: p.cutQuantity || (p.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)'),
+      cutQuantity: typeof p.cutQuantity === 'number' ? p.cutQuantity : (String(p.cutQuantity || '').includes('1') ? 1 : 2),
+      cutQuantityLabel: typeof p.cutQuantity === 'string' ? p.cutQuantity : (p.cutQuantityLabel || (p.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)')),
       svgPath: p.path,
       isFold: Boolean(p.onFold),
       seamAllowance: p.seamAllowance ?? 0.5,

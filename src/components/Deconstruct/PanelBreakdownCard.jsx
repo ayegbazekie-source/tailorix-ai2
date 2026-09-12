@@ -47,12 +47,12 @@ export default function PanelBreakdownCard({ result }) {
         </ul>
       </div>
 
-      {/* Port to Studio Canvas CTA */}
+      {/* Port to Drafting Board CTA */}
       <button
-        onClick={() => navigate('/studio')}
+        onClick={() => navigate('/cad')}
         className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold rounded-xl border border-amber-500/30 transition-all flex items-center justify-center gap-2"
       >
-        <span>Open in Studio Canvas to Draft</span>
+        <span>Open in Drafting Board</span>
         <ArrowRight className="w-4 h-4" />
       </button>
     </div>

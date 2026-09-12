@@ -94,7 +94,7 @@ export default function FabricMarkerView({ pieces = [], units = 'in' }) {
       {/* Fabric Roll Canvas Visualizer */}
       <div className="flex-1 bg-[#141517] p-5 rounded-2xl border border-[#222427] shadow-panel flex flex-col min-h-0">
         <div className="flex items-center justify-between pb-3 border-b border-[#222427] text-xs text-[#8A8B93] font-mono">
-          <span>FABRIC ROLL (WIDTH: {fabricWidth}", LENGTH: {marker.totalLengthInches}")</span>
+          <span>FABRIC ROLL (WIDTH: {fabricWidth}", LENGTH: {marker?.totalLengthInches || 0}")</span>
           <span className="text-[11px] text-[#C5A059]">SCALE 1:10</span>
         </div>
 
@@ -103,7 +103,7 @@ export default function FabricMarkerView({ pieces = [], units = 'in' }) {
             className="relative bg-[#F4F4F1] border-2 border-dashed border-[#C5A059]/40 rounded-xl shadow-inner"
             style={{
               width: `${Math.max(fabricWidth * scale, 300)}px`,
-              height: `${Math.max(marker.totalLengthInches * scale, 380)}px`,
+              height: `${Math.max((marker?.totalLengthInches || 0) * scale, 380)}px`,
             }}
           >
             {/* Fabric Width Edge Marks */}
@@ -114,7 +114,7 @@ export default function FabricMarkerView({ pieces = [], units = 'in' }) {
             </div>
 
             {/* Placed Pieces */}
-            {marker.placedPieces.map((p) => (
+            {(marker?.placedPieces || []).map((p) => (
               <div
                 key={p.id}
                 className="absolute border border-[#1A1B1D] bg-white/95 rounded-lg p-1.5 flex flex-col justify-between overflow-hidden shadow-sm hover:border-[#C5A059] hover:bg-[#FAF9F5] transition-colors"

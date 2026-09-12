@@ -22,10 +22,10 @@ export default function TemplatesPage() {
             </div>
             <div>
               <h1 className="text-base sm:text-lg font-semibold text-[#F5F5F7]">
-                Template & Sloper Library
+                Ready-Made Outlines & Templates
               </h1>
               <p className="text-xs text-[#8A8B93] mt-0.5">
-                Standard bespoke tailoring slopers, block patterns, and digital croquis for parametric CAD drafting.
+                Standard tailoring outlines, block patterns, and digital croquis for fashion drafting.
               </p>
             </div>
           </div>
@@ -40,7 +40,7 @@ export default function TemplatesPage() {
                   : 'text-[#8A8B93] hover:text-[#EDEDF0]'
               }`}
             >
-              Master Slopers
+              Ready-Made Outlines
             </button>
             <button
               onClick={() => setActiveTab('croquis')}
@@ -87,7 +87,7 @@ export default function TemplatesPage() {
                   href={`/deconstruct?template=${block.id}`}
                   className="mt-5 w-full py-2.5 bg-[#C5A059] hover:bg-[#D4AF37] text-[#101112] rounded-xl text-xs font-semibold text-center block transition-all shadow-gold-sm flex items-center justify-center gap-1.5"
                 >
-                  <span>Load in CAD Workbench</span>
+                  <span>Load into Drafting Board</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </a>
               </div>
@@ -112,7 +112,7 @@ export default function TemplatesPage() {
                     href="/deconstruct"
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#18191C] hover:bg-[#222428] text-[#EDEDF0] hover:text-[#C5A059] rounded-xl text-xs font-semibold transition-all border border-[#282A2E]"
                   >
-                    <span>Use in Workbench</span>
+                    <span>Use in Drafting Board</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </a>
                 </div>

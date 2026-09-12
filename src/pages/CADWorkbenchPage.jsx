@@ -4,12 +4,12 @@
  */
 
 import React from 'react';
-import AutodeskSketchCADPlayground from '../components/StudioCanvas/AutodeskSketchCADPlayground';
+import DraftingBoardWorkspace from '../components/CAD/DraftingBoardWorkspace';
 
 export default function CADWorkbenchPage() {
   return (
     <div className="w-full h-full bg-[#101112] text-slate-100 overflow-hidden">
-      <AutodeskSketchCADPlayground defaultMode="cad" />
+      <DraftingBoardWorkspace />
     </div>
   );
 }

@@ -4,9 +4,9 @@ import { Scissors, ScanLine, BookOpen, Folder, Sparkles } from 'lucide-react';
 
 export function BottomNav() {
   const navItems = [
-    { to: '/cad', label: 'Workbench', icon: Scissors },
-    { to: '/deconstruct', label: 'Deconstruct', icon: ScanLine },
-    { to: '/templates', label: 'Templates', icon: BookOpen },
+    { to: '/cad', label: 'Drafting', icon: Scissors },
+    { to: '/deconstruct', label: 'Breakdown', icon: ScanLine },
+    { to: '/templates', label: 'Outlines', icon: BookOpen },
     { to: '/projects', label: 'Projects', icon: Folder },
     { to: '/tutor', label: 'AI Atelier', icon: Sparkles },
   ];

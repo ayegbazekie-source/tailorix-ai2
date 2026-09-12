@@ -64,7 +64,8 @@ export function validatePatternPieces(pieces = []) {
     }
 
     // 4. Cut Quantity Specification
-    if (!piece.cutQuantity || piece.cutQuantity.trim() === '') {
+    const cutQtyStr = piece.cutQuantity !== undefined && piece.cutQuantity !== null ? String(piece.cutQuantity).trim() : '';
+    if (!cutQtyStr) {
       issues.push({
         id: `cut_qty_${pId}`,
         type: 'info',

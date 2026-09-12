@@ -68,6 +68,7 @@ import ProfessionalCADCanvas from '../CAD/ProfessionalCADCanvas';
 import GradingMatrixView from '../CAD/GradingMatrixView';
 import FabricMarkerView from '../CAD/FabricMarkerView';
 import Garment3DSimulationView from '../CAD/Garment3DSimulationView';
+import AdvancedTailorDrawer from '../CAD/AdvancedTailorDrawer';
 
 // Fabric Texture Presets for Cutting Table
 const FABRIC_PRESETS = [
@@ -155,8 +156,8 @@ function getInitialPatternSet(sampleId = 'sample_gown') {
     patternPieces: (pattern.pieces || []).map((p, idx) => ({
       id: p.id || `piece_${idx}`,
       name: p.name,
-      cutQuantity: p.cutQuantity?.includes('1') ? 1 : 2,
-      cutQuantityLabel: p.cutQuantity || (p.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)'),
+      cutQuantity: typeof p.cutQuantity === 'number' ? p.cutQuantity : (String(p.cutQuantity || '').includes('1') ? 1 : 2),
+      cutQuantityLabel: typeof p.cutQuantity === 'string' ? p.cutQuantity : (p.cutQuantityLabel || (p.onFold ? 'Cut 1 on Fold' : 'Cut 2 (1 Pair)')),
       svgPath: p.path,
       isFold: Boolean(p.onFold),
       seamAllowance: p.seamAllowance ?? 0.5,
@@ -208,6 +209,7 @@ export default function AutodeskSketchCADPlayground({ defaultMode = 'sketch' }) 
   const [pieces, setPieces] = useState([]);
   const [selectedPieceId, setSelectedPieceId] = useState(null);
   const [importedNotice, setImportedNotice] = useState(null);
+  const [showAdvancedDrawer, setShowAdvancedDrawer] = useState(false);
 
   // -------------------------------------------------------------
   // 4. Autodesk SketchBook Drawing & Tool Puck State
@@ -615,11 +617,11 @@ export default function AutodeskSketchCADPlayground({ defaultMode = 'sketch' }) 
           {/* Mode Switcher Tabs */}
           <div className="flex bg-[#060912] p-1 rounded-xl border border-slate-800/80 text-xs font-semibold gap-1">
             {[
-              { id: 'sketch', label: 'Sketch & Table', icon: Pencil },
-              { id: 'cad', label: 'CAD Nodes', icon: Sliders },
-              { id: 'grading', label: 'Grading Matrix', icon: Layers },
-              { id: 'marker', label: 'Marker Yield', icon: Scissors },
-              { id: '3d', label: '3D Simulation', icon: Box },
+              { id: 'sketch', label: 'Cutting Table', icon: Pencil },
+              { id: 'cad', label: 'Pattern Drafting Board', icon: Sliders },
+              { id: 'grading', label: 'Size Grading', icon: Layers },
+              { id: 'marker', label: 'Cutting Layout', icon: Scissors },
+              { id: '3d', label: '3D Fit', icon: Box },
             ].map((m) => {
               const Icon = m.icon;
               const isActive = activeMode === m.id;
@@ -717,6 +719,16 @@ export default function AutodeskSketchCADPlayground({ defaultMode = 'sketch' }) 
             title="Toggle SketchBook Tool Puck"
           >
             <Circle className="w-3.5 h-3.5 fill-current" />
+          </button>
+
+          {/* Advanced Tailor Options Drawer Trigger */}
+          <button
+            onClick={() => setShowAdvancedDrawer(true)}
+            className="px-2.5 py-1.5 bg-[#060912] hover:bg-slate-800/80 border border-slate-800 text-amber-400 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5"
+            title="Open Advanced Tailor Options (DXF export, node coordinates, exact seam offsets)"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Advanced</span>
           </button>
 
           {/* Export Button */}
@@ -1477,6 +1489,20 @@ export default function AutodeskSketchCADPlayground({ defaultMode = 'sketch' }) 
           </div>
         </div>
       )}
+
+      {/* Advanced Tailor Options Drawer */}
+      <AdvancedTailorDrawer
+        isOpen={showAdvancedDrawer}
+        onClose={() => setShowAdvancedDrawer(false)}
+        selectedPiece={selectedPiece}
+        onUpdateSeamAllowance={(pieceId, sa) => {
+          setPieces((prev) =>
+            prev.map((p) => (p.id === pieceId ? { ...p, seamAllowance: sa } : p))
+          );
+        }}
+        onExportDXF={handleExportDXF}
+        units="in"
+      />
     </div>
   );
 }

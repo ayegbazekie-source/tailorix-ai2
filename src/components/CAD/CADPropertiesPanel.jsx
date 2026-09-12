@@ -16,6 +16,7 @@ export default function CADPropertiesPanel({
   onDuplicatePiece = () => {},
   onDeletePiece = () => {},
   units = 'in',
+  onOpenAdvancedOptions = () => {},
 }) {
   const [activeTab, setActiveTab] = useState('pieces'); // 'pieces' | 'inspector' | 'validation'
 
@@ -90,7 +91,7 @@ export default function CADPropertiesPanel({
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-[#8A8B93] mt-1.5">
                   <span>{piece.cutQuantity}</span>
-                  <span className="font-mono text-[#C5A059]">SA: {piece.seamAllowance ?? 0.5}"</span>
+                  <span className="font-mono text-[#C5A059]">Edge: +{piece.seamAllowance ?? 0.5}"</span>
                 </div>
               </div>
             );
@@ -138,10 +139,10 @@ export default function CADPropertiesPanel({
               <div className="bg-[#18191B] p-3 rounded-xl border border-[#28292D]">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[11px] font-semibold text-[#8A8B93]">
-                    Seam Allowance ({units})
+                    Extra Sewing Edge ({units})
                   </label>
                   <span className="text-xs font-mono font-bold text-[#C5A059]">
-                    {selectedPiece.seamAllowance ?? 0.5}"
+                    +{selectedPiece.seamAllowance ?? 0.5}"
                   </span>
                 </div>
                 <input
@@ -174,11 +175,20 @@ export default function CADPropertiesPanel({
                     <span className="font-mono font-semibold text-[#EDEDF0]">{(selectedPiece.bounds.height / 12).toFixed(2)}"</span>
                   </div>
                   <div className="flex justify-between text-[#8A8B93]">
-                    <span>Vertices:</span>
-                    <span className="font-mono font-semibold text-[#EDEDF0]">{selectedPiece.points?.length || 0} nodes</span>
+                    <span>Points / Nodes:</span>
+                    <span className="font-mono font-semibold text-[#EDEDF0]">{selectedPiece.points?.length || 0} vertices</span>
                   </div>
                 </div>
               )}
+
+              {/* Advanced Tailor Options Button */}
+              <button
+                onClick={onOpenAdvancedOptions}
+                className="w-full py-2 px-3 bg-[#1A1C20] hover:bg-[#222429] border border-[#2D2F36] hover:border-amber-500/40 text-amber-300 rounded-xl text-xs font-medium flex items-center justify-center gap-2 transition-colors"
+              >
+                <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                <span>Advanced Tailor Options...</span>
+              </button>
 
               {/* Action Buttons */}
               <div className="pt-2 flex gap-2">

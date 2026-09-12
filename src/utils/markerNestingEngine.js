@@ -25,11 +25,21 @@ export function calculateOptimizedMarker(pieces = [], options = {}) {
   // Expand pieces based on cut quantity
   const cutQueue = [];
   pieces.forEach((piece) => {
-    const qtyMatch = (piece.cutQuantity || '1').match(/\d+/);
-    const count = qtyMatch ? parseInt(qtyMatch[0], 10) : 1;
+    if (!piece) return;
+    let count = 1;
+    if (typeof piece.cutQuantity === 'number') {
+      count = Math.max(1, Math.round(piece.cutQuantity));
+    } else if (piece.cutQuantity) {
+      const qtyMatch = String(piece.cutQuantity).match(/\d+/);
+      count = qtyMatch ? parseInt(qtyMatch[0], 10) : 1;
+    } else if (piece.onFold || piece.isFold) {
+      count = 1;
+    } else {
+      count = 2;
+    }
     const bounds = calculatePieceBounds(piece);
-    const widthIn = bounds.width / scale;
-    const heightIn = bounds.height / scale;
+    const widthIn = (bounds && bounds.width) ? bounds.width / scale : 10;
+    const heightIn = (bounds && bounds.height) ? bounds.height / scale : 15;
 
     for (let i = 0; i < count; i++) {
       cutQueue.push({

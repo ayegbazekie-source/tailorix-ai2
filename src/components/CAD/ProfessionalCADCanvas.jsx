@@ -280,7 +280,7 @@ export default function ProfessionalCADCanvas({
                     fontFamily="sans-serif"
                     letterSpacing="0.05em"
                   >
-                    GRAIN
+                    FABRIC DIRECTION
                   </text>
                 </g>
               )}
@@ -418,7 +418,7 @@ export default function ProfessionalCADCanvas({
       {activeTool === 'node' && (
         <div className="absolute top-3 left-4 bg-[#141517]/90 backdrop-blur-md border border-[#C5A059]/40 text-[#E5C07B] text-xs px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-floating z-20">
           <span className="w-1.5 h-1.5 rounded-full bg-[#C5A059] animate-ping"></span>
-          <span>Node Edit Mode: Drag vertices to adjust curves</span>
+          <span>Drag & Adjust Points: Click and move points to shape the pattern</span>
         </div>
       )}
       {activeTool === 'tape' && (

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, ZoomIn, Target, Eraser, PenTool, Crosshair } from 'lucide-react';
-import { TAILOR_RULERS_CATALOG } from './TailorRulersCatalog';
+import { TAILOR_RULERS_CATALOG, getRulerDimensions } from './TailorRulersCatalog';
 
 // Helper to convert array of points to smooth SVG path
 function pointsToSvgPath(points) {
@@ -19,6 +19,7 @@ export default function MagnifyingGlassLoupe({
   cuttingSheets = [],
   activeRulers = [],
   brushSize = 3,
+  currentStroke = null,
 }) {
   const [magnification, setMagnification] = useState(2.5); // 2.0x, 2.5x, 3.0x
 
@@ -30,15 +31,33 @@ export default function MagnifyingGlassLoupe({
   const viewY = lensState.y - worldRadius;
   const viewSize = worldRadius * 2;
 
-  // Position on screen avoiding viewport boundaries
-  const screenX = Math.min(
-    window.innerWidth - (LOUPE_SIZE + 30),
-    Math.max(16, (lensState.screenX || 200) + 36)
-  );
-  const screenY = Math.min(
-    window.innerHeight - (LOUPE_SIZE + 80),
-    Math.max(64, (lensState.screenY || 200) - LOUPE_SIZE / 2)
-  );
+  // Position on screen: Default strictly ABOVE pointer/finger so user's hand never blocks it
+  const BADGE_HEIGHT = 44;
+  const TOTAL_HEIGHT = LOUPE_SIZE + BADGE_HEIGHT + 12;
+  const rawScreenX = lensState.screenX ?? 200;
+  const rawScreenY = lensState.screenY ?? 200;
+
+  let screenX = rawScreenX - LOUPE_SIZE / 2;
+  let screenY = rawScreenY - TOTAL_HEIGHT - 32;
+  let positionMode = 'above'; // 'above' | 'side-left' | 'side-right'
+
+  // If the finger or emphasis point is near top of screen (or loupe would be clipped at top < 40px),
+  // do NOT flip directly below where the palm/hand blocks it!
+  // Instead, shift dynamically to the side of the emphasis point with clear vertical alignment.
+  if (screenY < 40) {
+    if (rawScreenX > (typeof window !== 'undefined' ? window.innerWidth : 800) / 2) {
+      screenX = rawScreenX - LOUPE_SIZE - 44;
+      screenY = Math.max(16, Math.min((typeof window !== 'undefined' ? window.innerHeight : 600) - TOTAL_HEIGHT - 16, rawScreenY - LOUPE_SIZE / 2));
+      positionMode = 'side-left';
+    } else {
+      screenX = rawScreenX + 44;
+      screenY = Math.max(16, Math.min((typeof window !== 'undefined' ? window.innerHeight : 600) - TOTAL_HEIGHT - 16, rawScreenY - LOUPE_SIZE / 2));
+      positionMode = 'side-right';
+    }
+  } else {
+    const winW = typeof window !== 'undefined' ? window.innerWidth : 1000;
+    screenX = Math.min(winW - (LOUPE_SIZE + 24), Math.max(16, screenX));
+  }
 
   const isEraser = lensState.tool === 'eraser';
   const isDart = lensState.tool === 'dart_marker';
@@ -47,161 +66,208 @@ export default function MagnifyingGlassLoupe({
   const eraserRadius = Math.max(14, brushSize * 2);
 
   return (
-    <div
-      id="cad-magnifying-glass-loupe"
-      className="fixed z-50 select-none pointer-events-none transition-all duration-75 ease-out"
-      style={{
-        left: `${screenX}px`,
-        top: `${screenY}px`,
-      }}
-    >
-      {/* Precision Lens Housing (High-Contrast Bezel) */}
-      <div className="relative w-48 h-48 rounded-full border-4 border-amber-400 bg-[#080d1a] shadow-[0_16px_40px_rgba(0,0,0,0.85),0_0_24px_rgba(245,158,11,0.4)] overflow-hidden">
-        {/* Optical Magnified Viewport SVG */}
-        <svg
-          width={LOUPE_SIZE}
-          height={LOUPE_SIZE}
-          viewBox={`${viewX} ${viewY} ${viewSize} ${viewSize}`}
-          className="w-full h-full block"
-        >
-          <defs>
-            {/* Fine CAD Millimeter Grid */}
-            <pattern id="loupeGrid10" width="10" height="10" patternUnits="userSpaceOnUse">
-              <path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(56, 189, 248, 0.12)" strokeWidth="0.5" />
-            </pattern>
-            {/* Major CAD 50px Grid */}
-            <pattern id="loupeGrid50" width="50" height="50" patternUnits="userSpaceOnUse">
-              <rect width="50" height="50" fill="url(#loupeGrid10)" />
-              <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(245, 158, 11, 0.22)" strokeWidth="0.8" />
-            </pattern>
-          </defs>
+    <>
+      {/* Optical Reticle Guide Stem linking loupe directly to pointer/finger emphasis point */}
+      <svg className="fixed inset-0 pointer-events-none z-50 w-full h-full">
+        {/* Glow target bead at exact emphasis point */}
+        <circle cx={rawScreenX} cy={rawScreenY} r="4" fill="#fbbf24" stroke="#000000" strokeWidth="1.5" />
+        <circle cx={rawScreenX} cy={rawScreenY} r="8" fill="none" stroke="#f59e0b" strokeWidth="1" strokeDasharray="2 2" opacity="0.8" />
+        {/* Connecting guide trace */}
+        <line
+          x1={
+            positionMode === 'side-left'
+              ? screenX + LOUPE_SIZE
+              : positionMode === 'side-right'
+              ? screenX
+              : screenX + LOUPE_SIZE / 2
+          }
+          y1={
+            positionMode === 'above'
+              ? screenY + LOUPE_SIZE + BADGE_HEIGHT + 6
+              : screenY + LOUPE_SIZE / 2
+          }
+          x2={rawScreenX}
+          y2={rawScreenY}
+          stroke="#f59e0b"
+          strokeWidth="1.5"
+          strokeDasharray="3 3"
+          opacity="0.8"
+        />
+      </svg>
 
-          {/* Navy CAD Surface Background */}
-          <rect x={viewX} y={viewY} width={viewSize} height={viewSize} fill="#080d1a" />
-          <rect x={viewX} y={viewY} width={viewSize} height={viewSize} fill="url(#loupeGrid50)" />
+      <div
+        id="cad-magnifying-glass-loupe"
+        className="fixed z-50 select-none pointer-events-none transition-all duration-75 ease-out flex flex-col items-center"
+        style={{
+          left: `${screenX}px`,
+          top: `${screenY}px`,
+        }}
+      >
+        {/* Precision Lens Housing (High-Contrast Bezel) */}
+        <div className="relative w-48 h-48 rounded-full border-4 border-amber-400 bg-[#080d1a] shadow-[0_16px_40px_rgba(0,0,0,0.85),0_0_24px_rgba(245,158,11,0.4)] overflow-hidden">
+          {/* Optical Magnified Viewport SVG */}
+          <svg
+            width={LOUPE_SIZE}
+            height={LOUPE_SIZE}
+            viewBox={`${viewX} ${viewY} ${viewSize} ${viewSize}`}
+            className="w-full h-full block"
+          >
+            <defs>
+              {/* Fine CAD Millimeter Grid */}
+              <pattern id="loupeGrid10" width="10" height="10" patternUnits="userSpaceOnUse">
+                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(56, 189, 248, 0.12)" strokeWidth="0.5" />
+              </pattern>
+              {/* Major CAD 50px Grid */}
+              <pattern id="loupeGrid50" width="50" height="50" patternUnits="userSpaceOnUse">
+                <rect width="50" height="50" fill="url(#loupeGrid10)" />
+                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(245, 158, 11, 0.22)" strokeWidth="0.8" />
+              </pattern>
+            </defs>
 
-          {/* 1. Cutting Sheets Backgrounds & Seam Lines */}
-          {cuttingSheets.map((sheet) => (
-            <g key={sheet.id}>
-              <rect
-                x={sheet.x}
-                y={sheet.y}
-                width={sheet.width}
-                height={sheet.height}
-                fill="#0f172a"
-                stroke="#38bdf8"
-                strokeWidth="1.2"
-                strokeDasharray="4 2"
-                opacity={0.8}
-              />
-              {/* Fold Line */}
-              {sheet.isFolded && (
-                <line
-                  x1={sheet.x + sheet.width / 2}
-                  y1={sheet.y}
-                  x2={sheet.x + sheet.width / 2}
-                  y2={sheet.y + sheet.height}
-                  stroke="#38bdf8"
-                  strokeWidth="1"
-                  strokeDasharray="3 3"
-                />
-              )}
-            </g>
-          ))}
+            {/* Navy CAD Surface Background */}
+            <rect x={viewX} y={viewY} width={viewSize} height={viewSize} fill="#080d1a" />
+            <rect x={viewX} y={viewY} width={viewSize} height={viewSize} fill="url(#loupeGrid50)" />
 
-          {/* 2. Drafted Garment Pieces & Layers */}
-          {layers
-            .filter((layer) => layer.visible)
-            .map((layer) => (
-              <g key={layer.id} opacity={layer.opacity || 1}>
-                {/* Bodice Piece SVG Outline */}
-                {layer.piece && layer.piece.pathData && (
-                  <path
-                    d={layer.piece.pathData}
-                    fill="none"
-                    stroke="#f8fafc"
-                    strokeWidth="1.8"
+            {/* 1. Cutting Sheets Backgrounds & Seam Lines */}
+            {cuttingSheets.map((sheet) => {
+              const effW = sheet.isMirrored ? sheet.width * 2 : sheet.width;
+              return (
+                <g key={sheet.id}>
+                  <rect
+                    x={sheet.x}
+                    y={sheet.y}
+                    width={effW}
+                    height={sheet.height}
+                    fill="#0f172a"
+                    stroke="#38bdf8"
+                    strokeWidth="1.2"
+                    strokeDasharray="4 2"
+                    opacity={0.8}
                   />
-                )}
+                  {/* Fold Line */}
+                  {sheet.isMirrored && (
+                    <line
+                      x1={sheet.x + sheet.width}
+                      y1={sheet.y}
+                      x2={sheet.x + sheet.width}
+                      y2={sheet.y + sheet.height}
+                      stroke="#f59e0b"
+                      strokeWidth="1.5"
+                      strokeDasharray="4 3"
+                    />
+                  )}
+                </g>
+              );
+            })}
 
-                {/* Layer Elements: Strokes & Seam Allowances */}
-                {layer.elements &&
-                  layer.elements.map((el) => {
-                    if (el.tool === 'dart_marker' && el.apex) {
-                      return (
-                        <g key={el.id}>
-                          <circle cx={el.apex.x} cy={el.apex.y} r="3.5" fill="#f59e0b" stroke="#000" strokeWidth="0.8" />
-                          {el.legs && el.legs.length > 0 && (
-                            <polyline
-                              points={el.legs.map((pt) => `${pt.x},${pt.y}`).join(' ')}
-                              fill="none"
-                              stroke="#f59e0b"
-                              strokeWidth="1.5"
-                              strokeDasharray="4 3"
-                            />
-                          )}
-                          <text
-                            x={el.apex.x + 6}
-                            y={el.apex.y + 3.5}
-                            fill="#f59e0b"
-                            fontSize="8"
-                            fontFamily="monospace"
-                            fontWeight="bold"
-                          >
-                            DART APEX
-                          </text>
-                        </g>
-                      );
-                    }
+            {/* 2. Drafted Garment Pieces & Layers */}
+            {layers
+              .filter((layer) => layer.visible)
+              .map((layer) => (
+                <g key={layer.id} opacity={layer.opacity || 1}>
+                  {/* Bodice Piece SVG Outline */}
+                  {layer.piece && (layer.piece.svgPath || layer.piece.path || layer.piece.pathData) && (
+                    <g transform={`translate(${layer.offsetX || 0}, ${layer.offsetY || 0}) rotate(${layer.rotation || 0})`}>
+                      <path
+                        d={layer.piece.svgPath || layer.piece.path || layer.piece.pathData}
+                        fill="none"
+                        stroke="#f8fafc"
+                        strokeWidth="1.8"
+                      />
+                    </g>
+                  )}
 
-                    if (el.points && el.points.length > 0) {
-                      return (
-                        <path
-                          key={el.id}
-                          d={pointsToSvgPath(el.points)}
-                          fill="none"
-                          stroke={el.color || '#ffffff'}
-                          strokeWidth={el.size || 2}
-                          strokeDasharray={el.dashed ? '5 4' : 'none'}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      );
-                    }
+                  {/* Layer Elements: Rendered directly in world coordinates matching loupe viewBox */}
+                  {layer.elements &&
+                    layer.elements.map((el) => {
+                      if (el.tool === 'dart_marker' && el.apex) {
+                        return (
+                          <g key={el.id}>
+                            <circle cx={el.apex.x} cy={el.apex.y} r="2.2" fill={el.color || '#f59e0b'} stroke="#000" strokeWidth="0.8" />
+                            {el.legs && el.legs.length > 0 && (
+                              <polyline
+                                points={el.legs.map((pt) => `${pt.x},${pt.y}`).join(' ')}
+                                fill="none"
+                                stroke={el.color || '#f59e0b'}
+                                strokeWidth={el.size || 1}
+                                strokeDasharray="4 3"
+                              />
+                            )}
+                            <text
+                              x={el.apex.x + 4}
+                              y={el.apex.y + 2}
+                              fill={el.color || '#f59e0b'}
+                              fontSize="6.5"
+                              fontFamily="monospace"
+                              fontWeight="bold"
+                            >
+                              DART APEX
+                            </text>
+                          </g>
+                        );
+                      }
 
-                    return null;
-                  })}
-              </g>
-            ))}
+                      if (el.points && el.points.length > 0) {
+                        return (
+                          <path
+                            key={el.id}
+                            d={pointsToSvgPath(el.points)}
+                            fill="none"
+                            stroke={el.color || '#ffffff'}
+                            strokeWidth={el.size || 2}
+                            strokeDasharray={el.dashed ? '5 4' : 'none'}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        );
+                      }
 
-          {/* 3. Active Rulers Visual Boundaries */}
-          {activeRulers.map((ruler) => {
-            const cat = TAILOR_RULERS_CATALOG[ruler.type];
-            if (!cat) return null;
-            return (
-              <g
-                key={ruler.id}
-                transform={`translate(${ruler.x}, ${ruler.y}) rotate(${ruler.rotation || 0}) scale(${ruler.scale || 1})`}
-              >
-                <path
-                  d={cat.getOuterPath ? cat.getOuterPath(ruler.length || cat.defaultLength) : cat.outerPath}
-                  fill="rgba(56, 189, 248, 0.08)"
-                  stroke="#38bdf8"
-                  strokeWidth="1.5"
-                />
-              </g>
-            );
-          })}
+                      return null;
+                    })}
+                </g>
+              ))}
 
-          {/* 4. Eraser Footprint Circle (Visible when Eraser is active) */}
-          {isEraser && (
-            <circle
-              cx={lensState.x}
-              cy={lensState.y}
-              r={eraserRadius}
-              fill="rgba(239, 68, 68, 0.15)"
+            {/* In-Progress Live Drawing Stroke */}
+            {currentStroke && currentStroke.points && currentStroke.points.length > 0 && (
+              <path
+                d={pointsToSvgPath(currentStroke.points)}
+                fill="none"
+                stroke={currentStroke.color || '#fbbf24'}
+                strokeWidth={currentStroke.size || 2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+
+            {/* 3. Active Rulers Visual Boundaries (centered at ruler.x, ruler.y) */}
+            {activeRulers.map((ruler) => {
+              const cat = TAILOR_RULERS_CATALOG[ruler.type];
+              if (!cat) return null;
+              const { width, height } = getRulerDimensions(ruler);
+              return (
+                <g
+                  key={ruler.id}
+                  transform={`translate(${ruler.x}, ${ruler.y}) rotate(${ruler.rotation || 0}) scale(${ruler.scale || 1}) translate(${-width / 2}, ${-height / 2})`}
+                >
+                  <path
+                    d={cat.getOuterPath ? cat.getOuterPath(ruler.length || cat.defaultLength) : cat.outerPath}
+                    fill="rgba(56, 189, 248, 0.08)"
+                    stroke="#38bdf8"
+                    strokeWidth="1.5"
+                  />
+                </g>
+              );
+            })}
+
+            {/* 4. Eraser Footprint Circle (Visible when Eraser is active) */}
+            {isEraser && (
+              <circle
+                cx={lensState.x}
+                cy={lensState.y}
+                r={eraserRadius}
+                fill="rgba(239, 68, 68, 0.18)"
               stroke="#ef4444"
-              strokeWidth="1.2"
+              strokeWidth="1.4"
               strokeDasharray="4 3"
             />
           )}
@@ -297,8 +363,13 @@ export default function MagnifyingGlassLoupe({
         </div>
       </div>
 
+      {/* Downward pointer indicator when positioned above finger */}
+      {positionMode === 'above' && (
+        <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[9px] border-t-amber-400 mt-0.5 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+      )}
+
       {/* Attached Precision Readout Badge */}
-      <div className="mt-1.5 bg-[#090e1a]/95 backdrop-blur-md border border-amber-400/80 rounded-xl px-3 py-1 shadow-2xl text-center min-w-[160px]">
+      <div className="mt-1 bg-[#090e1a]/95 backdrop-blur-md border border-amber-400/80 rounded-xl px-3 py-1 shadow-2xl text-center min-w-[160px]">
         <div className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center justify-center gap-1">
           {isEraser ? (
             <Eraser className="w-3 h-3 text-red-400" />
@@ -324,5 +395,6 @@ export default function MagnifyingGlassLoupe({
         </div>
       </div>
     </div>
-  );
+  </>
+);
 }

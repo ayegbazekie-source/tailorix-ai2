@@ -241,12 +241,24 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const touchZoomRef = useRef(null);
 
   // Tape Measure Tool State (Interactive 2-point measurement)
+  // Tape measure is not a layer and auto-disappears after 10 seconds of non-use
   const [tapeMeasure, setTapeMeasure] = useState({
     start: null,
     end: null,
     active: false,
     savedDist: null,
   });
+  const tapeAutoHideTimerRef = useRef(null);
+
+  // Trigger auto-hide for tape measure after 10 seconds of inactivity
+  const triggerTapeAutoHideTimer = () => {
+    if (tapeAutoHideTimerRef.current) {
+      clearTimeout(tapeAutoHideTimerRef.current);
+    }
+    tapeAutoHideTimerRef.current = setTimeout(() => {
+      setTapeMeasure({ start: null, end: null, active: false, savedDist: null });
+    }, 10000);
+  };
 
   // Cursor position for the Laser Guide on the Scissors tool
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
@@ -268,6 +280,35 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [selectedLayerIdsForMerge, setSelectedLayerIdsForMerge] = useState([]);
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeGroupName, setMergeGroupName] = useState('');
+
+  // Sub-layer position auto-locking ticker (re-evaluates every second for 10s auto-lock)
+  const [lockStatusTick, setLockStatusTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLockStatusTick((t) => (t + 1) % 10000);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Check if a sub-layer (element) has auto-locked its position (after 10s of no movement)
+  // Sub-layers can still be erased, but cannot be moved once locked
+  const isElementPositionLocked = (el) => {
+    if (!el) return false;
+    if (el.positionLocked === true) return true;
+    if (el.unlockedUntil && Date.now() < el.unlockedUntil) return false;
+    const lastActivity = el.lastMovedAt || el.createdAt || 0;
+    return lastActivity > 0 && Date.now() - lastActivity >= 10000;
+  };
+
+  // Tape Measure 10-second inactivity listener
+  useEffect(() => {
+    if (tapeMeasure.start) {
+      triggerTapeAutoHideTimer();
+    }
+    return () => {
+      if (tapeAutoHideTimerRef.current) clearTimeout(tapeAutoHideTimerRef.current);
+    };
+  }, [tapeMeasure.start, tapeMeasure.end, tapeMeasure.active]);
 
   // -------------------------------------------------------------------------
   // 4. Cutting Table State: Fabric Canvas & Drafted Pattern Overlay
@@ -291,9 +332,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0 });
 
-  // Piece Move dragging state
+  // Piece & Collective Layer Move dragging state
   const [isMovingPiece, setIsMovingPiece] = useState(false);
   const movingPieceRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0, layerId: null });
+  const preMoveSnapshotRef = useRef(null);
+  const hasMovedRef = useRef(false);
 
   // Ruler/Curve dragging state
   const [isDraggingRuler, setIsDraggingRuler] = useState(false);
@@ -442,6 +485,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     return current;
   };
 
+  // Record a complete universal snapshot for Undo/Redo across all layers and sub-layers
+  const pushUndoSnapshot = () => {
+    setUndoStack((prev) => {
+      const snapshot = {
+        layers: JSON.parse(JSON.stringify(layers)),
+        cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+        activeLayerId,
+        selectedElementId,
+      };
+      const next = [...prev, snapshot];
+      return next.length > 40 ? next.slice(next.length - 40) : next;
+    });
+    setRedoStack([]);
+  };
+
   const toggleLayerVisibility = (id) => {
     setLayers((prev) =>
       prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l))
@@ -455,6 +513,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   };
 
   const deleteLayer = (id) => {
+    pushUndoSnapshot();
     const layerToDelete = layers.find((l) => l.id === id);
     const linkedSheetId = layerToDelete?.sheetId;
 
@@ -499,7 +558,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     );
   };
 
+  // Sub-layers can still be erased and deleted, but are not moved once auto-locked
   const deleteElement = (layerId, elementId) => {
+    pushUndoSnapshot();
     setLayers((prev) =>
       prev.map((l) => {
         if (l.id !== layerId) return l;
@@ -514,7 +575,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     }
   };
 
-  const handleNudgeElement = (layerId, elementId, dx, dy) => {
+  // Manually lock or unlock sub-layer position
+  const handleToggleElementLock = (layerId, elementId) => {
+    pushUndoSnapshot();
     setLayers((prev) =>
       prev.map((l) => {
         if (l.id !== layerId) return l;
@@ -522,9 +585,49 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           ...l,
           elements: l.elements.map((el) => {
             if (el.id !== elementId) return el;
+            const currentlyLocked = isElementPositionLocked(el);
+            if (currentlyLocked) {
+              return {
+                ...el,
+                positionLocked: false,
+                lastMovedAt: Date.now(),
+                unlockedUntil: Date.now() + 10000,
+              };
+            } else {
+              return {
+                ...el,
+                positionLocked: true,
+                unlockedUntil: 0,
+              };
+            }
+          }),
+        };
+      })
+    );
+  };
+
+  const handleNudgeElement = (layerId, elementId, dx, dy) => {
+    const parentLayer = layers.find((l) => l.id === layerId);
+    const targetEl = parentLayer?.elements?.find((el) => el.id === elementId);
+
+    // Prevent moving if sub-layer is position-locked
+    if (targetEl && isElementPositionLocked(targetEl)) {
+      return;
+    }
+
+    pushUndoSnapshot();
+    setLayers((prev) =>
+      prev.map((l) => {
+        if (l.id !== layerId) return l;
+        return {
+          ...l,
+          elements: l.elements.map((el) => {
+            if (el.id !== elementId) return el;
+            const updatedTime = Date.now();
             if (el.tool === 'dart_marker' && el.apex) {
               return {
                 ...el,
+                lastMovedAt: updatedTime,
                 apex: { x: el.apex.x + dx, y: el.apex.y + dy },
                 legs: el.legs ? el.legs.map((pt) => ({ x: pt.x + dx, y: pt.y + dy })) : [],
               };
@@ -533,6 +636,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             const shifted = el.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }));
             return {
               ...el,
+              lastMovedAt: updatedTime,
               points: shifted,
               pathData: renderPointsToPath(shifted),
             };
@@ -548,6 +652,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= layers.length) return;
 
+    pushUndoSnapshot();
     const newLayers = [...layers];
     const [moved] = newLayers.splice(index, 1);
     newLayers.splice(newIndex, 0, moved);
@@ -594,6 +699,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   const handleConfirmMerge = (customName = null) => {
     if (selectedLayerIdsForMerge.length < 2) return;
+    pushUndoSnapshot();
     const layersToMerge = layers.filter((l) => selectedLayerIdsForMerge.includes(l.id));
     const remainingLayers = layers.filter((l) => !selectedLayerIdsForMerge.includes(l.id));
 
@@ -881,10 +987,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       label: '5/8" Seam Allowance',
     };
 
+    pushUndoSnapshot();
     setLayers((prev) =>
       prev.map((l) => (l.id === layerId ? { ...l, elements: [...l.elements, seamStroke] } : l))
     );
-    setUndoStack((prev) => [...prev, { layerId, element: seamStroke }]);
   };
 
   // Wheel zoom handler: Smooth zoom up to 4x (400% magnification) anchored to cursor
@@ -1034,12 +1140,12 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       label: `Snapped ${rulerName}`,
     };
 
+    pushUndoSnapshot();
     setLayers((prev) =>
       prev.map((l) =>
         l.id === currentLayer.id ? { ...l, elements: [...l.elements, seamStroke] } : l
       )
     );
-    setUndoStack((prev) => [...prev, { layerId: currentLayer.id, element: seamStroke }]);
   };
 
   // Partial Eraser: Erases specific parts of a sketch instead of discarding full strokes
@@ -1184,6 +1290,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
     // TOOL: TAPE MEASURE
     if (activeTool === 'tape_measure') {
+      triggerTapeAutoHideTimer();
       if (!tapeMeasure.start || (tapeMeasure.start && !tapeMeasure.active)) {
         // Start measurement
         setTapeMeasure({ start: { x, y }, end: { x, y }, active: true, savedDist: null });
@@ -1203,6 +1310,13 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       if (activeSubTab === 'cutting' && selectedCuttingPieceId) {
         const piece = cuttingTablePieces.find((p) => p.id === selectedCuttingPieceId);
         if (piece) {
+          preMoveSnapshotRef.current = {
+            layers: JSON.parse(JSON.stringify(layers)),
+            cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+            activeLayerId,
+            selectedElementId,
+          };
+          hasMovedRef.current = false;
           movingPieceRef.current = {
             startX: screenX,
             startY: screenY,
@@ -1214,68 +1328,98 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         }
       }
 
-      // If a specific line element from a sheet sub-layer is selected, move that specific line!
+      // 1. Check if a specific sub-layer (element) is selected
       if (selectedElementId) {
-        const selLayer = layers.find((l) => l.elements.some((el) => el.id === selectedElementId));
-        const selEl = selLayer?.elements.find((el) => el.id === selectedElementId);
+        const selLayer = layers.find((l) => l.elements?.some((el) => el.id === selectedElementId));
+        const selEl = selLayer?.elements?.find((el) => el.id === selectedElementId);
         if (selEl) {
-          movingPieceRef.current = {
-            startX: screenX,
-            startY: screenY,
-            elementId: selectedElementId,
-            layerId: selLayer.id,
-            initialPoints: selEl.points ? selEl.points.map((p) => ({ ...p })) : null,
-            initialApex: selEl.apex ? { ...selEl.apex } : null,
-            initialLegs: selEl.legs ? selEl.legs.map((p) => ({ ...p })) : null,
-          };
-          return;
+          // The sub-layers automatically lock to position if not moved within 10 seconds
+          // Sub-layers can still be erased, but not moved once locked
+          if (isElementPositionLocked(selEl)) {
+            // Position locked! Regulate unnecessary movement: Deselect element and fall through to collective layer move
+            setSelectedElementId(null);
+          } else {
+            // Position unlocked (within 10s of last move): allow moving this individual line
+            preMoveSnapshotRef.current = {
+              layers: JSON.parse(JSON.stringify(layers)),
+              cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+              activeLayerId,
+              selectedElementId,
+            };
+            hasMovedRef.current = false;
+            movingPieceRef.current = {
+              startX: screenX,
+              startY: screenY,
+              elementId: selectedElementId,
+              layerId: selLayer.id,
+              initialPoints: selEl.points ? selEl.points.map((p) => ({ ...p })) : null,
+              initialApex: selEl.apex ? { ...selEl.apex } : null,
+              initialLegs: selEl.legs ? selEl.legs.map((p) => ({ ...p })) : null,
+            };
+            return;
+          }
         }
       }
 
-      // If clicked inside or on any cutting sheet, move the FULL cutting sheet!
-      // (Lines drawn on the sheet remain permanently locked to it)
+      // 2. Collective Layer Movement when selected (marked box)
+      // "A layer can be moved collectively with the sub-layers when selected (marked box)."
+      let markedLayerIds = selectedLayerIdsForMerge.length > 0 ? [...selectedLayerIdsForMerge] : [];
+
+      // If user clicked directly on a cutting sheet and no boxes are marked, select that sheet's layer
       const clickedSheet = cuttingSheets.find((s) => {
         const effW = s.isMirrored ? s.width * 2 : s.width;
         return x >= s.x && x <= s.x + effW && y >= s.y && y <= s.y + s.height;
       });
-      if (clickedSheet) {
-        setSelectedCuttingSheetId(clickedSheet.id);
-        if (clickedSheet.layerId) setActiveLayerId(clickedSheet.layerId);
-        movingPieceRef.current = {
-          startX: screenX,
-          startY: screenY,
-          initialX: clickedSheet.x,
-          initialY: clickedSheet.y,
-          sheetId: clickedSheet.id,
-        };
-        return;
+
+      if (markedLayerIds.length === 0) {
+        if (clickedSheet) {
+          setSelectedCuttingSheetId(clickedSheet.id);
+          const sheetLayerId = clickedSheet.layerId || `layer_sheet_${clickedSheet.id}`;
+          markedLayerIds = [sheetLayerId];
+          setActiveLayerId(sheetLayerId);
+        } else if (activeLayerId) {
+          markedLayerIds = [activeLayerId];
+        } else if (layers.length > 0) {
+          markedLayerIds = [layers[0].id];
+        }
       }
 
-      const activePieceLayer = layers.find((l) => l.id === activeLayerId) || layers[0];
-      if (activePieceLayer) {
-        // If this layer is linked to a cutting sheet, move the full sheet, NOT isolated lines!
-        const sheetForLayer = cuttingSheets.find(
-          (s) => s.id === activePieceLayer.sheetId || s.layerId === activePieceLayer.id || `layer_sheet_${s.id}` === activePieceLayer.id
-        );
-        if (sheetForLayer) {
-          setSelectedCuttingSheetId(sheetForLayer.id);
-          movingPieceRef.current = {
-            startX: screenX,
-            startY: screenY,
-            initialX: sheetForLayer.x,
-            initialY: sheetForLayer.y,
-            sheetId: sheetForLayer.id,
-          };
-          return;
-        }
+      const targetLayers = layers.filter((l) => markedLayerIds.includes(l.id));
+      if (targetLayers.length > 0) {
+        preMoveSnapshotRef.current = {
+          layers: JSON.parse(JSON.stringify(layers)),
+          cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+          activeLayerId,
+          selectedElementId,
+        };
+        hasMovedRef.current = false;
+
+        const targetSheetIds = cuttingSheets
+          .filter((s) =>
+            targetLayers.some(
+              (l) => l.id === s.layerId || l.sheetId === s.id || l.id === `layer_sheet_${s.id}`
+            )
+          )
+          .map((s) => s.id);
 
         movingPieceRef.current = {
           startX: screenX,
           startY: screenY,
-          initialX: activePieceLayer.offsetX,
-          initialY: activePieceLayer.offsetY,
-          layerId: activePieceLayer.id,
+          collectiveMove: true,
+          targetLayerIds: targetLayers.map((l) => l.id),
+          targetSheetIds,
+          initialLayers: layers.map((l) => ({
+            id: l.id,
+            offsetX: l.offsetX || 0,
+            offsetY: l.offsetY || 0,
+          })),
+          initialSheets: cuttingSheets.map((s) => ({
+            id: s.id,
+            x: s.x,
+            y: s.y,
+          })),
         };
+        return;
       }
       return;
     }
@@ -1284,23 +1428,26 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     const currentLayer = ensureActiveLayer({ x, y });
     if (!currentLayer || currentLayer.locked || !currentLayer.visible) return;
 
-    // TOOL: DART MARKER
+    // TOOL: DART MARKER (Reduced dart size per user specification)
     if (activeTool === 'dart_marker') {
-      // Place an anatomical dart apex with triangular legs (Zoom-aware scale bound to pattern sheet 1:1)
+      pushUndoSnapshot();
       const dartStroke = {
         id: `dart_${Date.now()}`,
         tool: 'dart_marker',
         apex: { x, y },
         legs: [
-          { x: x - 14, y: y + 54 },
+          { x: x - 6, y: y + 20 },
           { x: x, y: y },
-          { x: x + 14, y: y + 54 },
+          { x: x + 6, y: y + 20 },
         ],
         color: brushColor,
-        size: Math.max(1.5, Math.round((2 / Math.max(0.5, zoom)) * 10) / 10),
-        fontSize: 10,
+        size: Math.max(0.75, Math.round((0.9 / Math.max(0.6, zoom)) * 10) / 10),
+        fontSize: 7,
         createdZoom: zoom,
         label: 'DART APEX',
+        createdAt: Date.now(),
+        lastMovedAt: Date.now(),
+        positionLocked: false,
       };
 
       setLayers((prev) =>
@@ -1308,7 +1455,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           l.id === currentLayer.id ? { ...l, elements: [...l.elements, dartStroke] } : l
         )
       );
-      setUndoStack((prev) => [...prev, { layerId: currentLayer.id, element: dartStroke }]);
       return;
     }
 
@@ -1459,17 +1605,61 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
     // Handle Tape Measure interactive dragging
     if (activeTool === 'tape_measure' && tapeMeasure.start && tapeMeasure.active) {
+      triggerTapeAutoHideTimer();
       setTapeMeasure((prev) => ({ ...prev, end: { x, y } }));
       return;
     }
 
-    // Handle Piece Move
+    // Handle Piece & Collective Layer Move
     if (isMovingPiece) {
-      // Individual Sub-Layer Line Movement
+      hasMovedRef.current = true;
+
+      // Collective Layer Movement (Moves layer and all its sub-layers together when marked)
+      if (movingPieceRef.current.collectiveMove) {
+        const { startX, startY, targetLayerIds, targetSheetIds, initialLayers, initialSheets } = movingPieceRef.current;
+        const dx = (screenX - startX) / zoom;
+        const dy = (screenY - startY) / zoom;
+
+        // Move any linked cutting sheets collectively
+        if (targetSheetIds && targetSheetIds.length > 0) {
+          setCuttingSheets((prev) =>
+            prev.map((s) => {
+              if (!targetSheetIds.includes(s.id)) return s;
+              const initS = initialSheets?.find((item) => item.id === s.id);
+              if (!initS) return s;
+              return {
+                ...s,
+                x: Math.round(initS.x + dx),
+                y: Math.round(initS.y + dy),
+              };
+            })
+          );
+        }
+
+        // Move target layers and their sub-layer vector paths collectively
+        setLayers((prev) =>
+          prev.map((l) => {
+            if (!targetLayerIds.includes(l.id)) return l;
+            const initL = initialLayers?.find((item) => item.id === l.id);
+            const baseOffsetX = initL ? initL.offsetX : (l.offsetX || 0);
+            const baseOffsetY = initL ? initL.offsetY : (l.offsetY || 0);
+
+            return {
+              ...l,
+              offsetX: Math.round(baseOffsetX + dx),
+              offsetY: Math.round(baseOffsetY + dy),
+            };
+          })
+        );
+        return;
+      }
+
+      // Individual Sub-Layer Line Movement (allowed only if not auto-locked)
       if (movingPieceRef.current.elementId) {
         const { elementId, layerId, startX, startY, initialPoints, initialApex, initialLegs } = movingPieceRef.current;
         const dx = (screenX - startX) / zoom;
         const dy = (screenY - startY) / zoom;
+        const moveTimestamp = Date.now();
         setLayers((prev) =>
           prev.map((l) => {
             if (l.id !== layerId) return l;
@@ -1480,6 +1670,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 if (initialApex && initialLegs) {
                   return {
                     ...el,
+                    lastMovedAt: moveTimestamp,
                     apex: { x: Math.round(initialApex.x + dx), y: Math.round(initialApex.y + dy) },
                     legs: initialLegs.map((pt) => ({ x: Math.round(pt.x + dx), y: Math.round(pt.y + dy) })),
                   };
@@ -1488,6 +1679,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   const shifted = initialPoints.map((pt) => ({ x: Math.round(pt.x + dx), y: Math.round(pt.y + dy) }));
                   return {
                     ...el,
+                    lastMovedAt: moveTimestamp,
                     points: shifted,
                     pathData: renderPointsToPath(shifted),
                   };
@@ -1684,6 +1876,17 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     }
     movingPieceRef.current = { startX: 0, startY: 0, initialX: 0, initialY: 0, layerId: null, pieceId: null, sheetId: null };
 
+    // If a piece, layer, or sub-layer was moved, commit snapshot to universal undo stack
+    if (hasMovedRef.current && preMoveSnapshotRef.current) {
+      setUndoStack((prev) => {
+        const next = [...prev, preMoveSnapshotRef.current];
+        return next.length > 40 ? next.slice(next.length - 40) : next;
+      });
+      setRedoStack([]);
+      preMoveSnapshotRef.current = null;
+      hasMovedRef.current = false;
+    }
+
     // Commit Custom Sheet Drawing
     if (sheetDrawPreview) {
       const minX = Math.min(sheetDrawPreview.startX, sheetDrawPreview.currentX);
@@ -1714,6 +1917,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       if (currentStroke.tool === 'eraser') {
         const eraserRadius = Math.max(14, currentStroke.size * 2);
         const eraserPts = currentStroke.points;
+        pushUndoSnapshot();
         setLayers((prev) =>
           prev.map((l) => {
             if (l.locked || !l.visible) return l;
@@ -1727,10 +1931,14 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         return;
       }
 
+      pushUndoSnapshot();
       const strokeToCommit = {
         ...currentStroke,
         visible: true,
         pathData: renderPointsToPath(currentStroke.points),
+        createdAt: Date.now(),
+        lastMovedAt: Date.now(),
+        positionLocked: false,
       };
       // Commit stroke to active layer
       setLayers((prev) =>
@@ -1738,42 +1946,71 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           l.id === targetLayer.id ? { ...l, elements: [...l.elements, strokeToCommit] } : l
         )
       );
-      setUndoStack((prev) => [...prev, { layerId: targetLayer.id, element: strokeToCommit }]);
       setRedoStack([]);
       setCurrentStroke(null);
     }
   };
 
   // -------------------------------------------------------------------------
-  // 11. Undo / Redo Actions
+  // 11. Undo / Redo Actions (Universal across all layers and sub-layers)
+  // Selecting any of these toggles will undo/redo the last change across layers or sub-layers
   // -------------------------------------------------------------------------
   const handleUndo = () => {
     if (undoStack.length === 0) return;
-    const lastAction = undoStack[undoStack.length - 1];
+    const currentSnapshot = {
+      layers: JSON.parse(JSON.stringify(layers)),
+      cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+      activeLayerId,
+      selectedElementId,
+    };
+    const previousSnapshot = undoStack[undoStack.length - 1];
     setUndoStack((prev) => prev.slice(0, -1));
-    setRedoStack((prev) => [...prev, lastAction]);
+    setRedoStack((prev) => [...prev, currentSnapshot]);
 
-    setLayers((prev) =>
-      prev.map((l) =>
-        l.id === lastAction.layerId
-          ? { ...l, elements: l.elements.filter((el) => el.id !== lastAction.element.id) }
-          : l
-      )
-    );
+    if (previousSnapshot.layers) setLayers(previousSnapshot.layers);
+    if (previousSnapshot.cuttingSheets) setCuttingSheets(previousSnapshot.cuttingSheets);
+    if (previousSnapshot.activeLayerId !== undefined) setActiveLayerId(previousSnapshot.activeLayerId);
+    if (previousSnapshot.selectedElementId !== undefined) setSelectedElementId(previousSnapshot.selectedElementId);
   };
 
   const handleRedo = () => {
     if (redoStack.length === 0) return;
-    const nextAction = redoStack[redoStack.length - 1];
+    const currentSnapshot = {
+      layers: JSON.parse(JSON.stringify(layers)),
+      cuttingSheets: JSON.parse(JSON.stringify(cuttingSheets)),
+      activeLayerId,
+      selectedElementId,
+    };
+    const nextSnapshot = redoStack[redoStack.length - 1];
     setRedoStack((prev) => prev.slice(0, -1));
-    setUndoStack((prev) => [...prev, nextAction]);
+    setUndoStack((prev) => [...prev, currentSnapshot]);
 
-    setLayers((prev) =>
-      prev.map((l) =>
-        l.id === nextAction.layerId ? { ...l, elements: [...l.elements, nextAction.element] } : l
-      )
-    );
+    if (nextSnapshot.layers) setLayers(nextSnapshot.layers);
+    if (nextSnapshot.cuttingSheets) setCuttingSheets(nextSnapshot.cuttingSheets);
+    if (nextSnapshot.activeLayerId !== undefined) setActiveLayerId(nextSnapshot.activeLayerId);
+    if (nextSnapshot.selectedElementId !== undefined) setSelectedElementId(nextSnapshot.selectedElementId);
   };
+
+  // Keyboard shortcut listener for universal Undo / Redo
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) {
+          e.preventDefault();
+          handleRedo();
+        } else {
+          e.preventDefault();
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undoStack, redoStack, layers, cuttingSheets, activeLayerId, selectedElementId]);
 
   // -------------------------------------------------------------------------
   // 12. Convert Stroke Points to SVG Path
@@ -2927,15 +3164,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         }`}
                       >
                         <div className="flex items-center gap-1.5 flex-1 min-w-0 pr-1">
-                          {/* Sheet Sub-Layer Expand / Collapse Toggle */}
-                          {isSheetLayer ? (
+                          {/* Sub-Layer Expand / Collapse Toggle for any layer with elements */}
+                          {layerElements.length > 0 ? (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleExpandSheetLayer(layer.id);
                               }}
                               className="p-1 hover:bg-slate-700/80 rounded text-amber-400 shrink-0 transition-transform"
-                              title={isExpanded ? 'Collapse Sub-layers' : 'Expand Sub-layers (Drawn lines on sheet)'}
+                              title={isExpanded ? 'Collapse Sub-layers' : `Expand Sub-layers (${layerElements.length} lines/strokes)`}
                             >
                               {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                             </button>
@@ -2943,7 +3180,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             <span className="w-2" />
                           )}
 
-                          {/* Checkbox for Layer Merging */}
+                          {/* Marked Checkbox: Moves layer collectively with all sub-layers */}
                           <input
                             type="checkbox"
                             checked={isSelectedForMerge}
@@ -2953,7 +3190,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             }}
                             onClick={(e) => e.stopPropagation()}
                             className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0 cursor-pointer shrink-0"
-                            title="Select this layer to merge"
+                            title="Mark box: moves this layer collectively with all its sub-layers, or merges layers"
                           />
 
                           {/* Active indicator dot */}
@@ -2977,19 +3214,26 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             />
                           ) : (
                             <div className="truncate">
-                              <span
-                                onDoubleClick={() => startRenameLayer(layer)}
-                                className="truncate text-xs font-bold text-slate-200 block"
-                                title="Double-click to rename layer"
-                              >
-                                {layer.name}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  onDoubleClick={() => startRenameLayer(layer)}
+                                  className="truncate text-xs font-bold text-slate-200 block"
+                                  title="Double-click to rename layer"
+                                >
+                                  {layer.name}
+                                </span>
+                                {isSelectedForMerge && (
+                                  <span className="text-[8px] font-mono px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-semibold tracking-wider">
+                                    COLLECTIVE
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[9px] font-mono uppercase tracking-wider text-amber-400/80">
                                 {isSheetLayer
-                                  ? `Sheet Layer • (${layerElements.length} lines/sub-layers)`
+                                  ? `Sheet Layer • (${layerElements.length} sub-layers)`
                                   : layer.isGroup
                                   ? `Merged Group (${layer.mergedCount} layers)`
-                                  : `${layer.bodiceType} • (${layerElements.length} strokes)`}
+                                  : `${layer.bodiceType} • (${layerElements.length} sub-layers)`}
                               </span>
                             </div>
                           )}
@@ -3024,16 +3268,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             </button>
                           )}
 
-                          {/* Piece Move Shortcut */}
+                          {/* Collective Layer Move Shortcut */}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveLayerId(layer.id);
                               setSelectedElementId(null);
+                              if (!selectedLayerIdsForMerge.includes(layer.id)) {
+                                setSelectedLayerIdsForMerge([layer.id]);
+                              }
                               setActiveTool('piece_move');
                             }}
                             className="p-1 hover:text-amber-300 text-slate-400 rounded"
-                            title="Move this Bodice / Sheet Piece"
+                            title="Move this Layer collectively with all sub-layers (Move Tool)"
                           >
                             <Move className="w-3.5 h-3.5" />
                           </button>
@@ -3096,16 +3343,23 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         </div>
                       </div>
 
-                      {/* SUB-LAYERS FOR CUT SHEET: Individual Lines drawn with rulers/curves */}
-                      {isSheetLayer && isExpanded && (
+                      {/* SUB-LAYERS: Individual Lines & Shapes drawn on the board or sheet */}
+                      {isExpanded && (
                         <div className="ml-5 pl-2 border-l-2 border-amber-500/30 space-y-1 py-1">
                           {layerElements.length === 0 ? (
                             <div className="text-[10px] text-slate-500 italic py-1 px-2">
-                              No lines drawn on this sheet yet. Use ruler, curve, or pen to draft.
+                              No lines drawn on this layer yet. Use ruler, curve, or pen to draft.
                             </div>
                           ) : (
                             layerElements.map((el, elIdx) => {
                               const isElSelected = selectedElementId === el.id;
+                              const isElLocked = isElementPositionLocked(el);
+                              const lastActivity = el.lastMovedAt || el.createdAt || 0;
+                              const elapsedSec = Math.floor((Date.now() - lastActivity) / 1000);
+                              const remainingSec = el.unlockedUntil && el.unlockedUntil > Date.now()
+                                ? Math.ceil((el.unlockedUntil - Date.now()) / 1000)
+                                : Math.max(0, 10 - elapsedSec);
+
                               const lineName =
                                 el.label ||
                                 (el.rulerName ? `Snapped: ${el.rulerName}` : el.tool === 'dart_marker' ? 'Dart Marker' : el.isRulerLine ? `Ruler Line ${elIdx + 1}` : `Line ${elIdx + 1}`);
@@ -3115,9 +3369,14 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                   key={el.id}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setSelectedElementId(isElSelected ? null : el.id);
-                                    setActiveLayerId(layer.id);
-                                    if (!isElSelected) setActiveTool('piece_move');
+                                    if (isElLocked) {
+                                      // Position locked after 10s: still selectable for inspect/erase, but movement is regulated
+                                      setSelectedElementId(isElSelected ? null : el.id);
+                                    } else {
+                                      setSelectedElementId(isElSelected ? null : el.id);
+                                      setActiveLayerId(layer.id);
+                                      if (!isElSelected) setActiveTool('piece_move');
+                                    }
                                   }}
                                   className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] transition-all cursor-pointer border ${
                                     isElSelected
@@ -3131,40 +3390,91 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                       style={{ backgroundColor: el.color || '#facc15' }}
                                     />
                                     <span className="truncate font-medium">{lineName}</span>
-                                    {isElSelected && (
-                                      <span className="text-[9px] font-mono px-1 rounded bg-amber-500 text-slate-950 font-bold">
-                                        MOVABLE
+
+                                    {/* Sub-layer Auto-Lock Status Badge */}
+                                    {isElLocked ? (
+                                      <span
+                                        className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/80 flex items-center gap-0.5 shrink-0"
+                                        title="Auto-locked after 10s non-use to prevent accidental line shifting. Erasable via Eraser tool or trash icon."
+                                      >
+                                        <Lock className="w-2.5 h-2.5 text-amber-400/90" />
+                                        <span>Locked</span>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5 shrink-0"
+                                        title={`Movable for ${remainingSec}s before position auto-locks.`}
+                                      >
+                                        <Unlock className="w-2.5 h-2.5 text-emerald-400" />
+                                        <span>{remainingSec}s</span>
                                       </span>
                                     )}
                                   </div>
 
                                   <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                    {/* Nudge Line Movement Controls */}
+                                    {/* Toggle Sub-Layer Lock/Unlock Button */}
+                                    <button
+                                      onClick={() => handleToggleElementLock(layer.id, el.id)}
+                                      className={`p-1 rounded transition-colors ${
+                                        isElLocked
+                                          ? 'hover:text-amber-300 text-amber-400/80 hover:bg-slate-800'
+                                          : 'hover:text-emerald-300 text-emerald-400 hover:bg-slate-800'
+                                      }`}
+                                      title={
+                                        isElLocked
+                                          ? 'Click to unlock position for 10 seconds of adjustment'
+                                          : 'Click to lock position now'
+                                      }
+                                    >
+                                      {isElLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                    </button>
+
+                                    {/* Nudge Line Movement Controls (active only when position is unlocked) */}
                                     <button
                                       onClick={() => handleNudgeElement(layer.id, el.id, -5, 0)}
-                                      className="p-1 hover:text-amber-300 text-slate-500 rounded"
-                                      title="Nudge Line Left 5px"
+                                      disabled={isElLocked}
+                                      className={`p-1 rounded ${
+                                        isElLocked
+                                          ? 'text-slate-600 cursor-not-allowed'
+                                          : 'hover:text-amber-300 text-slate-400'
+                                      }`}
+                                      title={isElLocked ? 'Sub-layer position locked (10s elapsed)' : 'Nudge Line Left 5px'}
                                     >
                                       <ArrowLeft className="w-2.5 h-2.5" />
                                     </button>
                                     <button
                                       onClick={() => handleNudgeElement(layer.id, el.id, 5, 0)}
-                                      className="p-1 hover:text-amber-300 text-slate-500 rounded"
-                                      title="Nudge Line Right 5px"
+                                      disabled={isElLocked}
+                                      className={`p-1 rounded ${
+                                        isElLocked
+                                          ? 'text-slate-600 cursor-not-allowed'
+                                          : 'hover:text-amber-300 text-slate-400'
+                                      }`}
+                                      title={isElLocked ? 'Sub-layer position locked (10s elapsed)' : 'Nudge Line Right 5px'}
                                     >
                                       <ArrowRight className="w-2.5 h-2.5" />
                                     </button>
                                     <button
                                       onClick={() => handleNudgeElement(layer.id, el.id, 0, -5)}
-                                      className="p-1 hover:text-amber-300 text-slate-500 rounded"
-                                      title="Nudge Line Up 5px"
+                                      disabled={isElLocked}
+                                      className={`p-1 rounded ${
+                                        isElLocked
+                                          ? 'text-slate-600 cursor-not-allowed'
+                                          : 'hover:text-amber-300 text-slate-400'
+                                      }`}
+                                      title={isElLocked ? 'Sub-layer position locked (10s elapsed)' : 'Nudge Line Up 5px'}
                                     >
                                       <ArrowUp className="w-2.5 h-2.5" />
                                     </button>
                                     <button
                                       onClick={() => handleNudgeElement(layer.id, el.id, 0, 5)}
-                                      className="p-1 hover:text-amber-300 text-slate-500 rounded"
-                                      title="Nudge Line Down 5px"
+                                      disabled={isElLocked}
+                                      className={`p-1 rounded ${
+                                        isElLocked
+                                          ? 'text-slate-600 cursor-not-allowed'
+                                          : 'hover:text-amber-300 text-slate-400'
+                                      }`}
+                                      title={isElLocked ? 'Sub-layer position locked (10s elapsed)' : 'Nudge Line Down 5px'}
                                     >
                                       <ArrowDown className="w-2.5 h-2.5" />
                                     </button>
@@ -3182,11 +3492,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                       )}
                                     </button>
 
-                                    {/* Delete Individual Line */}
+                                    {/* Delete / Erase Individual Line (Always allowed per user specification) */}
                                     <button
                                       onClick={() => deleteElement(layer.id, el.id)}
                                       className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded"
-                                      title="Delete This Line"
+                                      title="Erase / Delete This Sub-Layer Line"
                                     >
                                       <Trash2 className="w-3 h-3" />
                                     </button>
@@ -3703,6 +4013,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       }
 
                       if (el.tool === 'dart_marker') {
+                        const dartRadius = zoom >= 1.5 ? 2.5 : zoom >= 0.8 ? 1.8 : 1.2;
+                        const dartStrokeWidth = Math.min(1.4, Math.max(0.7, (el.size || 1) * Math.min(1, zoom)));
                         return (
                           <g key={el.id}>
                             {/* Selected Halo for Dart */}
@@ -3710,17 +4022,17 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                               <circle
                                 cx={el.apex.x - layer.offsetX}
                                 cy={el.apex.y - layer.offsetY}
-                                r="10"
+                                r="6"
                                 fill="none"
                                 stroke="#f59e0b"
-                                strokeWidth="2.5"
-                                strokeDasharray="3 3"
+                                strokeWidth="1.5"
+                                strokeDasharray="2 2"
                               />
                             )}
                             {/* Primary Dart */}
                             <g
                               stroke={isSelected ? '#fbbf24' : el.color}
-                              strokeWidth={el.size}
+                              strokeWidth={dartStrokeWidth}
                               cursor={isSheetLayer ? 'pointer' : 'default'}
                               onClick={(e) => {
                                 if (isSheetLayer) {
@@ -3730,32 +4042,35 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                 }
                               }}
                             >
-                              <circle cx={el.apex.x - layer.offsetX} cy={el.apex.y - layer.offsetY} r="4" fill={el.color} />
+                              <circle cx={el.apex.x - layer.offsetX} cy={el.apex.y - layer.offsetY} r={dartRadius} fill={el.color} />
                               <polyline
                                 points={el.legs
                                   .map((pt) => `${pt.x - layer.offsetX},${pt.y - layer.offsetY}`)
                                   .join(' ')}
                                 fill="none"
-                                strokeDasharray="4 3"
+                                strokeDasharray="3 2"
                               />
-                              <text
-                                x={el.apex.x - layer.offsetX + 8}
-                                y={el.apex.y - layer.offsetY + 4}
-                                fill={el.color}
-                                fontSize="10"
-                                fontFamily="monospace"
-                              >
-                                DART APEX
-                              </text>
+                              {zoom >= 0.85 && (
+                                <text
+                                  x={el.apex.x - layer.offsetX + 5}
+                                  y={el.apex.y - layer.offsetY + 3}
+                                  fill={el.color}
+                                  fontSize="7"
+                                  fontFamily="monospace"
+                                  opacity={0.8}
+                                >
+                                  DART
+                                </text>
+                              )}
                             </g>
 
                             {/* Cutting Sheet Mirrored Flipped Dart */}
                             {isSheetMirrored && sheetFoldX != null && (
-                              <g stroke={el.color} strokeWidth={el.size} opacity={0.88}>
+                              <g stroke={el.color} strokeWidth={dartStrokeWidth} opacity={0.88}>
                                 <circle
                                   cx={2 * sheetFoldX - el.apex.x - layer.offsetX}
                                   cy={el.apex.y - layer.offsetY}
-                                  r="4"
+                                  r={dartRadius}
                                   fill={el.color}
                                 />
                                 <polyline
@@ -3763,18 +4078,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                     .map((pt) => `${2 * sheetFoldX - pt.x - layer.offsetX},${pt.y - layer.offsetY}`)
                                     .join(' ')}
                                   fill="none"
-                                  strokeDasharray="4 3"
+                                  strokeDasharray="3 2"
                                 />
-                                <text
-                                  x={2 * sheetFoldX - el.apex.x - layer.offsetX - 8}
-                                  y={el.apex.y - layer.offsetY + 4}
-                                  fill={el.color}
-                                  fontSize="10"
-                                  fontFamily="monospace"
-                                  textAnchor="end"
-                                >
-                                  DART APEX 🪞
-                                </text>
+                                {zoom >= 0.85 && (
+                                  <text
+                                    x={2 * sheetFoldX - el.apex.x - layer.offsetX - 5}
+                                    y={el.apex.y - layer.offsetY + 3}
+                                    fill={el.color}
+                                    fontSize="7"
+                                    fontFamily="monospace"
+                                    textAnchor="end"
+                                    opacity={0.8}
+                                  >
+                                    DART 🪞
+                                  </text>
+                                )}
                               </g>
                             )}
                           </g>
@@ -4054,21 +4372,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       const distCm = (parseFloat(distInches) * 2.54).toFixed(1);
 
                       return (
-                        <g transform={`translate(${midX}, ${midY - 12})`}>
+                        <g transform={`translate(${midX}, ${midY - 14})`} className="cursor-pointer" onClick={() => setTapeMeasure({ start: null, end: null, active: false, savedDist: null })}>
                           <rect
-                            x="-50"
-                            y="-14"
-                            width="100"
-                            height="22"
-                            rx="6"
+                            x="-64"
+                            y="-16"
+                            width="128"
+                            height="30"
+                            rx="7"
                             fill="#0d1322"
-                            fillOpacity="0.9"
+                            fillOpacity="0.94"
                             stroke="#f59e0b"
                             strokeWidth="1.5"
                           />
                           <text
                             x="0"
-                            y="1"
+                            y="-2"
                             fill="#fbbf24"
                             fontSize="11"
                             fontWeight="bold"
@@ -4076,6 +4394,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             fontFamily="monospace"
                           >
                             {distInches}" ({distCm}cm)
+                          </text>
+                          <text
+                            x="0"
+                            y="9"
+                            fill="#94a3b8"
+                            fontSize="7.5"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                            fontFamily="sans-serif"
+                            letterSpacing="0.5"
+                          >
+                            AUTO-HIDES IN 10s • CLICK TO DISMISS
                           </text>
                         </g>
                       );
@@ -4243,6 +4573,31 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           />
         ))}
 
+        {/* ======================================================================= */}
+        {/* TOPPING ACTIVE DRAWING STROKE LAYER (Renders ABOVE rulers)              */}
+        {/* Guarantees lines drawn along rulers are 100% visible on top of ruler    */}
+        {/* ======================================================================= */}
+        {currentStroke && (
+          <svg
+            className="w-full h-full absolute inset-0 z-45 pointer-events-none select-none"
+            style={{
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            <path
+              d={renderPointsToPath(currentStroke.points)}
+              fill="none"
+              stroke={currentStroke.color || '#38bdf8'}
+              strokeWidth={currentStroke.size || 2}
+              strokeOpacity={1}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={currentStroke.tool === 'scissors' ? '6 4' : 'none'}
+            />
+          </svg>
+        )}
+
         {/* Magnetic Edge Snapping Visual Ping Indicator */}
         {activeSnapPoint && activeSnapPoint.snapped && (
           <div
@@ -4391,6 +4746,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           cuttingSheets={cuttingSheets}
           activeRulers={activeRulers}
           brushSize={brushSize}
+          currentStroke={currentStroke}
         />
 
         {/* ======================================================================= */}

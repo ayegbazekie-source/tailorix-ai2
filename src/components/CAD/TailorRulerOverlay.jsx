@@ -333,7 +333,11 @@ export default function TailorRulerOverlay({
 
   const gridColor = isBlueGrid ? 'rgba(56, 189, 248, 0.45)' : isRedGrid ? 'rgba(244, 63, 94, 0.45)' : 'rgba(255, 255, 255, 0.3)';
   const strokeColor = isBlueGrid ? '#38bdf8' : isRedGrid ? '#f43f5e' : isSolidWhite ? '#f8fafc' : '#fbbf24';
-  const fillColor = isSolidWhite ? 'rgba(248, 250, 252, 0.28)' : 'rgba(241, 245, 249, 0.16)';
+  const fillColor = isDrawing
+    ? 'rgba(241, 245, 249, 0.05)'
+    : isSolidWhite
+    ? 'rgba(248, 250, 252, 0.28)'
+    : 'rgba(241, 245, 249, 0.16)';
 
   // Effective visual scale on screen: if lockScreenScale is ON, ruler maintains comfortable fixed viewport scale
   const effectiveZoomScale = ruler.lockScreenScale ? (ruler.scale || 1) : (ruler.scale || 1) * zoom;
@@ -351,6 +355,8 @@ export default function TailorRulerOverlay({
       style={{
         left: `${screenX}px`,
         top: `${screenY}px`,
+        width: `${width}px`,
+        height: `${height}px`,
         transform: `translate(-50%, -50%) rotate(${ruler.rotation || 0}deg) scale(${
           effectiveZoomScale * (ruler.flipX ? -1 : 1)
         }, ${effectiveZoomScale * (ruler.flipY ? -1 : 1)})`,

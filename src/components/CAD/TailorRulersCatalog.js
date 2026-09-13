@@ -80,14 +80,18 @@ export const TAILOR_RULERS_CATALOG = {
     acrylicTheme: 'clear_blue_grid',
     outerPath: 'M 15 15 C 90 15, 170 30, 270 70 C 370 110, 460 170, 545 230 L 530 240 C 440 180, 345 125, 250 90 C 160 55, 80 40, 15 40 Z',
     getEdgePoints: () => {
-      const p1 = sampleCubicBezier({ x: 15, y: 15 }, { x: 170, y: 30 }, { x: 370, y: 110 }, { x: 545, y: 230 }, 60);
-      const p2 = sampleLine({ x: 545, y: 230 }, { x: 530, y: 240 }, 5);
-      const p3 = sampleCubicBezier({ x: 530, y: 240 }, { x: 345, y: 125 }, { x: 160, y: 55 }, { x: 15, y: 40 }, 50);
-      const p4 = sampleLine({ x: 15, y: 40 }, { x: 15, y: 15 }, 5);
-      return [...p1, ...p2, ...p3, ...p4];
+      const p1 = sampleCubicBezier({ x: 15, y: 15 }, { x: 90, y: 15 }, { x: 170, y: 30 }, { x: 270, y: 70 }, 35);
+      const p2 = sampleCubicBezier({ x: 270, y: 70 }, { x: 370, y: 110 }, { x: 460, y: 170 }, { x: 545, y: 230 }, 35);
+      const cap1 = sampleLine({ x: 545, y: 230 }, { x: 530, y: 240 }, 5);
+      const p3 = sampleCubicBezier({ x: 530, y: 240 }, { x: 440, y: 180 }, { x: 345, y: 125 }, { x: 250, y: 90 }, 35);
+      const p4 = sampleCubicBezier({ x: 250, y: 90 }, { x: 160, y: 55 }, { x: 80, y: 40 }, { x: 15, y: 40 }, 35);
+      const cap2 = sampleLine({ x: 15, y: 40 }, { x: 15, y: 15 }, 5);
+      return [...p1, ...p2, ...cap1, ...p3, ...p4, ...cap2];
     },
     primarySnapEdge: () => {
-      return sampleCubicBezier({ x: 15, y: 15 }, { x: 170, y: 30 }, { x: 370, y: 110 }, { x: 545, y: 230 }, 60);
+      const p1 = sampleCubicBezier({ x: 15, y: 15 }, { x: 90, y: 15 }, { x: 170, y: 30 }, { x: 270, y: 70 }, 40);
+      const p2 = sampleCubicBezier({ x: 270, y: 70 }, { x: 370, y: 110 }, { x: 460, y: 170 }, { x: 545, y: 230 }, 40);
+      return [...p1, ...p2];
     },
   },
 
@@ -105,15 +109,19 @@ export const TAILOR_RULERS_CATALOG = {
       const top = sampleLine({ x: 10, y: 10 }, { x: 420, y: 10 }, 35);
       const right = sampleLine({ x: 420, y: 10 }, { x: 420, y: 65 }, 8);
       const innerCorner = sampleLine({ x: 420, y: 65 }, { x: 75, y: 65 }, 25);
-      const curve1 = sampleCubicBezier({ x: 75, y: 65 }, { x: 120, y: 230 }, { x: 290, y: 345 }, { x: 410, y: 375 }, 40);
-      const end = sampleLine({ x: 410, y: 375 }, { x: 395, y: 385 }, 5);
-      const curve2 = sampleCubicBezier({ x: 395, y: 385 }, { x: 260, y: 345 }, { x: 90, y: 220 }, { x: 45, y: 10 }, 40);
+      const c1 = sampleCubicBezier({ x: 75, y: 65 }, { x: 75, y: 140 }, { x: 120, y: 230 }, { x: 240, y: 310 }, 35);
+      const c2 = sampleCubicBezier({ x: 240, y: 310 }, { x: 290, y: 345 }, { x: 340, y: 365 }, { x: 410, y: 375 }, 30);
+      const tip = sampleLine({ x: 410, y: 375 }, { x: 395, y: 385 }, 5);
+      const c3 = sampleCubicBezier({ x: 395, y: 385 }, { x: 315, y: 375 }, { x: 260, y: 345 }, { x: 205, y: 305 }, 30);
+      const c4 = sampleCubicBezier({ x: 205, y: 305 }, { x: 90, y: 220 }, { x: 45, y: 125 }, { x: 45, y: 10 }, 35);
       const left = sampleLine({ x: 45, y: 10 }, { x: 10, y: 10 }, 5);
-      return [...top, ...right, ...innerCorner, ...curve1, ...end, ...curve2, ...left];
+      return [...top, ...right, ...innerCorner, ...c1, ...c2, ...tip, ...c3, ...c4, ...left];
     },
     primarySnapEdge: () => {
       // Sweeping crotch/hip contour edge
-      return sampleCubicBezier({ x: 75, y: 65 }, { x: 120, y: 230 }, { x: 290, y: 345 }, { x: 410, y: 375 }, 50);
+      const c1 = sampleCubicBezier({ x: 75, y: 65 }, { x: 75, y: 140 }, { x: 120, y: 230 }, { x: 240, y: 310 }, 40);
+      const c2 = sampleCubicBezier({ x: 240, y: 310 }, { x: 290, y: 345 }, { x: 340, y: 365 }, { x: 410, y: 375 }, 35);
+      return [...c1, ...c2];
     },
   },
 
@@ -136,12 +144,15 @@ export const TAILOR_RULERS_CATALOG = {
     ],
     getEdgePoints: () => {
       const top = sampleLine({ x: 20, y: 20 }, { x: 440, y: 20 }, 30);
-      const curve = sampleCubicBezier({ x: 440, y: 20 }, { x: 470, y: 140 }, { x: 320, y: 240 }, { x: 110, y: 185 }, 45);
-      const side = sampleCubicBezier({ x: 110, y: 185 }, { x: 40, y: 150 }, { x: 15, y: 80 }, { x: 20, y: 20 }, 25);
-      return [...top, ...curve, ...side];
+      const c1 = sampleCubicBezier({ x: 440, y: 20 }, { x: 470, y: 60 }, { x: 460, y: 140 }, { x: 390, y: 195 }, 35);
+      const c2 = sampleCubicBezier({ x: 390, y: 195 }, { x: 320, y: 240 }, { x: 200, y: 230 }, { x: 110, y: 185 }, 35);
+      const c3 = sampleCubicBezier({ x: 110, y: 185 }, { x: 40, y: 150 }, { x: 15, y: 80 }, { x: 20, y: 20 }, 25);
+      return [...top, ...c1, ...c2, ...c3];
     },
     primarySnapEdge: () => {
-      return sampleCubicBezier({ x: 440, y: 20 }, { x: 470, y: 140 }, { x: 320, y: 240 }, { x: 110, y: 185 }, 50);
+      const c1 = sampleCubicBezier({ x: 440, y: 20 }, { x: 470, y: 60 }, { x: 460, y: 140 }, { x: 390, y: 195 }, 35);
+      const c2 = sampleCubicBezier({ x: 390, y: 195 }, { x: 320, y: 240 }, { x: 200, y: 230 }, { x: 110, y: 185 }, 35);
+      return [...c1, ...c2];
     },
   },
 
@@ -156,14 +167,18 @@ export const TAILOR_RULERS_CATALOG = {
     acrylicTheme: 'solid_white',
     outerPath: 'M 15 15 C 120 22, 240 38, 360 62 C 430 78, 500 95, 545 105 L 540 115 C 470 102, 390 82, 300 58 C 190 32, 90 20, 15 25 Z',
     getEdgePoints: () => {
-      const topCurve = sampleCubicBezier({ x: 15, y: 15 }, { x: 240, y: 38 }, { x: 430, y: 78 }, { x: 545, y: 105 }, 55);
+      const t1 = sampleCubicBezier({ x: 15, y: 15 }, { x: 120, y: 22 }, { x: 240, y: 38 }, { x: 360, y: 62 }, 35);
+      const t2 = sampleCubicBezier({ x: 360, y: 62 }, { x: 430, y: 78 }, { x: 500, y: 95 }, { x: 545, y: 105 }, 35);
       const right = sampleLine({ x: 545, y: 105 }, { x: 540, y: 115 }, 4);
-      const bottomCurve = sampleCubicBezier({ x: 540, y: 115 }, { x: 390, y: 82 }, { x: 190, y: 32 }, { x: 15, y: 25 }, 55);
+      const b1 = sampleCubicBezier({ x: 540, y: 115 }, { x: 470, y: 102 }, { x: 390, y: 82 }, { x: 300, y: 58 }, 35);
+      const b2 = sampleCubicBezier({ x: 300, y: 58 }, { x: 190, y: 32 }, { x: 90, y: 20 }, { x: 15, y: 25 }, 35);
       const left = sampleLine({ x: 15, y: 25 }, { x: 15, y: 15 }, 4);
-      return [...topCurve, ...right, ...bottomCurve, ...left];
+      return [...t1, ...t2, ...right, ...b1, ...b2, ...left];
     },
     primarySnapEdge: () => {
-      return sampleCubicBezier({ x: 15, y: 15 }, { x: 240, y: 38 }, { x: 430, y: 78 }, { x: 545, y: 105 }, 60);
+      const t1 = sampleCubicBezier({ x: 15, y: 15 }, { x: 120, y: 22 }, { x: 240, y: 38 }, { x: 360, y: 62 }, 40);
+      const t2 = sampleCubicBezier({ x: 360, y: 62 }, { x: 430, y: 78 }, { x: 500, y: 95 }, { x: 545, y: 105 }, 40);
+      return [...t1, ...t2];
     },
   },
 
@@ -179,12 +194,16 @@ export const TAILOR_RULERS_CATALOG = {
     outerPath: 'M 160 15 C 240 15, 305 65, 305 135 C 305 190, 240 230, 160 230 C 80 230, 15 190, 15 135 C 15 65, 80 15, 160 15 Z',
     innerSlotPath: 'M 160 45 C 215 45, 260 85, 260 135 C 260 175, 215 200, 160 200 C 105 200, 60 175, 60 135 C 60 85, 105 45, 160 45 Z',
     getEdgePoints: () => {
-      const arc1 = sampleCubicBezier({ x: 160, y: 15 }, { x: 305, y: 35 }, { x: 305, y: 165 }, { x: 160, y: 230 }, 45);
-      const arc2 = sampleCubicBezier({ x: 160, y: 230 }, { x: 15, y: 165 }, { x: 15, y: 35 }, { x: 160, y: 15 }, 45);
-      return [...arc1, ...arc2];
+      const arc1 = sampleCubicBezier({ x: 160, y: 15 }, { x: 240, y: 15 }, { x: 305, y: 65 }, { x: 305, y: 135 }, 25);
+      const arc2 = sampleCubicBezier({ x: 305, y: 135 }, { x: 305, y: 190 }, { x: 240, y: 230 }, { x: 160, y: 230 }, 25);
+      const arc3 = sampleCubicBezier({ x: 160, y: 230 }, { x: 80, y: 230 }, { x: 15, y: 190 }, { x: 15, y: 135 }, 25);
+      const arc4 = sampleCubicBezier({ x: 15, y: 135 }, { x: 15, y: 65 }, { x: 80, y: 15 }, { x: 160, y: 15 }, 25);
+      return [...arc1, ...arc2, ...arc3, ...arc4];
     },
     primarySnapEdge: () => {
-      return sampleCubicBezier({ x: 160, y: 15 }, { x: 305, y: 35 }, { x: 305, y: 165 }, { x: 160, y: 230 }, 50);
+      const arc1 = sampleCubicBezier({ x: 160, y: 15 }, { x: 240, y: 15 }, { x: 305, y: 65 }, { x: 305, y: 135 }, 30);
+      const arc2 = sampleCubicBezier({ x: 305, y: 135 }, { x: 305, y: 190 }, { x: 240, y: 230 }, { x: 160, y: 230 }, 30);
+      return [...arc1, ...arc2];
     },
   },
 
@@ -205,15 +224,30 @@ export const TAILOR_RULERS_CATALOG = {
       { cx: 210, cy: 45, r: 5 },
     ],
     getEdgePoints: () => {
-      const c1 = sampleCubicBezier({ x: 35, y: 220 }, { x: 45, y: 75 }, { x: 180, y: -5 }, { x: 335, y: 75 }, 45);
-      const c2 = sampleCubicBezier({ x: 335, y: 75 }, { x: 375, y: 185 }, { x: 255, y: 255 }, { x: 145, y: 195 }, 40);
-      const c3 = sampleCubicBezier({ x: 145, y: 195 }, { x: 115, y: 155 }, { x: 130, y: 110 }, { x: 175, y: 90 }, 30);
-      const c4 = sampleCubicBezier({ x: 175, y: 90 }, { x: 260, y: 100 }, { x: 250, y: 155 }, { x: 195, y: 160 }, 25);
-      return [...c1, ...c2, ...c3, ...c4];
+      const c1 = sampleCubicBezier({ x: 35, y: 220 }, { x: 15, y: 150 }, { x: 45, y: 75 }, { x: 110, y: 35 }, 35);
+      const c2 = sampleCubicBezier({ x: 110, y: 35 }, { x: 180, y: -5 }, { x: 280, y: 15 }, { x: 335, y: 75 }, 35);
+      const c3 = sampleCubicBezier({ x: 335, y: 75 }, { x: 375, y: 120 }, { x: 365, y: 185 }, { x: 310, y: 220 }, 30);
+      const c4 = sampleCubicBezier({ x: 310, y: 220 }, { x: 255, y: 255 }, { x: 185, y: 240 }, { x: 145, y: 195 }, 30);
+      const c5 = sampleCubicBezier({ x: 145, y: 195 }, { x: 115, y: 155 }, { x: 130, y: 110 }, { x: 175, y: 90 }, 25);
+      const c6 = sampleCubicBezier({ x: 175, y: 90 }, { x: 215, y: 75 }, { x: 260, y: 100 }, { x: 255, y: 130 }, 25);
+      const c7 = sampleCubicBezier({ x: 255, y: 130 }, { x: 250, y: 155 }, { x: 220, y: 170 }, { x: 195, y: 160 }, 20);
+      const tip = sampleLine({ x: 195, y: 160 }, { x: 190, y: 175 }, 4);
+      const c8 = sampleCubicBezier({ x: 190, y: 175 }, { x: 230, y: 190 }, { x: 280, y: 165 }, { x: 285, y: 125 }, 25);
+      const c9 = sampleCubicBezier({ x: 285, y: 125 }, { x: 290, y: 85 }, { x: 230, y: 50 }, { x: 175, y: 68 }, 25);
+      const c10 = sampleCubicBezier({ x: 175, y: 68 }, { x: 115, y: 88 }, { x: 90, y: 145 }, { x: 125, y: 200 }, 30);
+      const c11 = sampleCubicBezier({ x: 125, y: 200 }, { x: 170, y: 260 }, { x: 255, y: 275 }, { x: 330, y: 235 }, 30);
+      const c12 = sampleCubicBezier({ x: 330, y: 235 }, { x: 395, y: 195 }, { x: 400, y: 115 }, { x: 350, y: 60 }, 30);
+      const c13 = sampleCubicBezier({ x: 350, y: 60 }, { x: 285, y: -10 }, { x: 170, y: -15 }, { x: 90, y: 30 }, 35);
+      const c14 = sampleCubicBezier({ x: 90, y: 30 }, { x: 20, y: 75 }, { x: -10, y: 165 }, { x: 15, y: 240 }, 35);
+      return [...c1, ...c2, ...c3, ...c4, ...c5, ...c6, ...c7, ...tip, ...c8, ...c9, ...c10, ...c11, ...c12, ...c13, ...c14];
     },
     primarySnapEdge: () => {
-      // The classic outer spiral contour
-      return sampleCubicBezier({ x: 35, y: 220 }, { x: 45, y: 75 }, { x: 180, y: -5 }, { x: 335, y: 75 }, 60);
+      // The classic outer spiral contour: Exactly matches the first 4 bezier segments of outerPath
+      const c1 = sampleCubicBezier({ x: 35, y: 220 }, { x: 15, y: 150 }, { x: 45, y: 75 }, { x: 110, y: 35 }, 40);
+      const c2 = sampleCubicBezier({ x: 110, y: 35 }, { x: 180, y: -5 }, { x: 280, y: 15 }, { x: 335, y: 75 }, 40);
+      const c3 = sampleCubicBezier({ x: 335, y: 75 }, { x: 375, y: 120 }, { x: 365, y: 185 }, { x: 310, y: 220 }, 35);
+      const c4 = sampleCubicBezier({ x: 310, y: 220 }, { x: 255, y: 255 }, { x: 185, y: 240 }, { x: 145, y: 195 }, 35);
+      return [...c1, ...c2, ...c3, ...c4];
     },
   },
 
@@ -234,12 +268,15 @@ export const TAILOR_RULERS_CATALOG = {
     ],
     getEdgePoints: () => {
       const top = sampleLine({ x: 15, y: 15 }, { x: 250, y: 15 }, 25);
-      const sweep = sampleCubicBezier({ x: 250, y: 15 }, { x: 275, y: 95 }, { x: 170, y: 150 }, { x: 45, y: 100 }, 40);
-      const side = sampleCubicBezier({ x: 45, y: 100 }, { x: 15, y: 75 }, { x: 10, y: 40 }, { x: 15, y: 15 }, 20);
-      return [...top, ...sweep, ...side];
+      const c1 = sampleCubicBezier({ x: 250, y: 15 }, { x: 275, y: 45 }, { x: 270, y: 95 }, { x: 220, y: 125 }, 30);
+      const c2 = sampleCubicBezier({ x: 220, y: 125 }, { x: 170, y: 150 }, { x: 95, y: 135 }, { x: 45, y: 100 }, 30);
+      const c3 = sampleCubicBezier({ x: 45, y: 100 }, { x: 15, y: 75 }, { x: 10, y: 40 }, { x: 15, y: 15 }, 20);
+      return [...top, ...c1, ...c2, ...c3];
     },
     primarySnapEdge: () => {
-      return sampleCubicBezier({ x: 250, y: 15 }, { x: 275, y: 95 }, { x: 170, y: 150 }, { x: 45, y: 100 }, 45);
+      const c1 = sampleCubicBezier({ x: 250, y: 15 }, { x: 275, y: 45 }, { x: 270, y: 95 }, { x: 220, y: 125 }, 35);
+      const c2 = sampleCubicBezier({ x: 220, y: 125 }, { x: 170, y: 150 }, { x: 95, y: 135 }, { x: 45, y: 100 }, 35);
+      return [...c1, ...c2];
     },
   },
 };
@@ -378,9 +415,9 @@ export function constrainDrawingToActiveRuler(rawX, rawY, startX, startY, ruler)
     // -----------------------------------------------------------------------
     // FRENCH CURVE / CURVED RULER: STRICT CURVED SPLINE PROJECTION
     // -----------------------------------------------------------------------
-    const localCurvePoints = catalog.primarySnapEdge
-      ? catalog.primarySnapEdge(ruler.lengthOption || catalog.defaultLength)
-      : (catalog.getEdgePoints ? catalog.getEdgePoints(ruler.lengthOption || catalog.defaultLength) : []);
+    const localCurvePoints = catalog.getEdgePoints
+      ? catalog.getEdgePoints(ruler.lengthOption || catalog.defaultLength)
+      : (catalog.primarySnapEdge ? catalog.primarySnapEdge(ruler.lengthOption || catalog.defaultLength) : []);
 
     if (localCurvePoints && localCurvePoints.length >= 2) {
       const local = worldToRulerLocal(rawX, rawY, ruler);

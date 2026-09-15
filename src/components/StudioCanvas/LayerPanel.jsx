@@ -1,5 +1,22 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Lock, Unlock, Plus, X, Trash2, Layers, Scissors, Sparkles, Box } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Plus,
+  X,
+  Trash2,
+  Layers,
+  Scissors,
+  Sparkles,
+  Box,
+  FlipHorizontal,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+} from 'lucide-react';
 import { useCanvas } from '../../context/CanvasContext';
 
 export default function LayerPanel({ isOpen, onClose }) {
@@ -15,6 +32,9 @@ export default function LayerPanel({ isOpen, onClose }) {
     deleteLayer,
     addSheet,
     sheets,
+    fabricCanvasInstance,
+    toggleSheetMirror,
+    shiftFabricOnTable,
   } = useCanvas();
 
   const [newLayerName, setNewLayerName] = useState('');
@@ -27,6 +47,32 @@ export default function LayerPanel({ isOpen, onClose }) {
   const handleClose = () => {
     if (onClose) onClose();
     if (setIsLayerPanelOpen) setIsLayerPanelOpen(false);
+  };
+
+  const activeLayer = layers?.find((l) => l.id === activeLayerId);
+  const activeObj = fabricCanvasInstance?.getActiveObject?.();
+  const isPatternOrDraftActive = Boolean(
+    activeLayer?.isPattern ||
+    activeLayer?.isDraft ||
+    activeLayer?.type?.includes('bodice') ||
+    activeLayer?.origin === 'drafting_board' ||
+    activeObj ||
+    sheets?.some((s) => s.id === activeLayerId)
+  );
+
+  // Requirement 3: Mirror Active Layer horizontally
+  const handleMirrorActiveObject = () => {
+    if (fabricCanvasInstance) {
+      const active = fabricCanvasInstance.getActiveObject();
+      if (active) {
+        active.set('flipX', !active.flipX);
+        fabricCanvasInstance.renderAll();
+      }
+    }
+    const activeSheet = sheets?.find((s) => s.id === activeLayerId || s.layerId === activeLayerId);
+    if (activeSheet && toggleSheetMirror) {
+      toggleSheetMirror(activeSheet.id);
+    }
   };
 
   // Bodice section presets with corresponding customizable cutting sheets
@@ -128,8 +174,7 @@ export default function LayerPanel({ isOpen, onClose }) {
     }
   };
 
-  const activeLayer = layers?.find((l) => l.id === activeLayerId);
-
+  // Panel return
   return (
     <div
       className="absolute top-16 right-4 sm:right-6 z-50 w-84 max-w-[92vw] max-h-[80vh] overflow-y-auto bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl p-4 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none animate-in fade-in zoom-in-95 duration-150"
@@ -318,6 +363,71 @@ export default function LayerPanel({ isOpen, onClose }) {
           <span>NEW CUSTOM LAYER</span>
         </button>
       )}
+
+      {/* Requirement 3: Conditional Mirror Tool in Object Editing Panel */}
+      {isPatternOrDraftActive && (
+        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 mb-3">
+          <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+            <span>LAYER INSPECTOR</span>
+            <span className="text-amber-400 font-mono text-[10px] truncate max-w-[120px]">
+              {activeLayer?.name || 'Pattern Layer'}
+            </span>
+          </div>
+          <button
+            onClick={handleMirrorActiveObject}
+            className="w-full py-2 px-3 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-xs"
+            title="Mirror / Horizontal Flip active pattern layer"
+            id="btn-mirror-layer-panel"
+          >
+            <FlipHorizontal className="w-4 h-4 text-amber-400" />
+            <span>Mirror Layer (Horizontal Flip)</span>
+          </button>
+        </div>
+      )}
+
+      {/* Requirement 7: Shift Fabric on Table Controls */}
+      <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 mb-3">
+        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+          <span>Shift Fabric on Table</span>
+          <span className="text-[10px] text-slate-500 font-mono">20px</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5 max-w-[130px] mx-auto">
+          <div />
+          <button
+            type="button"
+            onClick={() => shiftFabricOnTable && shiftFabricOnTable('up', 20)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
+            title="Shift Fabric Up"
+          >
+            <ArrowUp className="w-3.5 h-3.5" />
+          </button>
+          <div />
+          <button
+            type="button"
+            onClick={() => shiftFabricOnTable && shiftFabricOnTable('left', 20)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
+            title="Shift Fabric Left"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => shiftFabricOnTable && shiftFabricOnTable('down', 20)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
+            title="Shift Fabric Down"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => shiftFabricOnTable && shiftFabricOnTable('right', 20)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
+            title="Shift Fabric Right"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
 
       {/* Target Status */}
       <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">

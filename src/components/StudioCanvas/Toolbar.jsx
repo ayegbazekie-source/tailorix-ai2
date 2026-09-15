@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Pencil,
   PenTool,
@@ -16,7 +16,8 @@ import {
   ChevronDown,
   Crosshair,
   Compass,
-  Square
+  Square,
+  Pipette,
 } from 'lucide-react';
 import { useCanvas } from '../../context/CanvasContext';
 
@@ -26,8 +27,14 @@ export default function Toolbar({ onUndo, onRedo, onClear, onOpenLayers }) {
   const {
     activeTool,
     setActiveTool,
+    handleToolSelect,
     brushColor,
     setBrushColor,
+    targetCutColor,
+    setTargetCutColor,
+    isEyedropperActive,
+    setIsEyedropperActive,
+    fabricCanvasInstance,
     activeRulerType,
     setActiveRulerType,
     rulerLength,
@@ -41,6 +48,24 @@ export default function Toolbar({ onUndo, onRedo, onClear, onOpenLayers }) {
     setIsDashedSeamAllowance,
     setStrokeDashStyle,
   } = useCanvas();
+
+  // Automatic Detection of vector object stroke colors on the canvas
+  const autoDetectedColors = useMemo(() => {
+    if (!fabricCanvasInstance) return ['#38BDF8', '#FACC15', '#FFFFFF', '#F43F5E'];
+    try {
+      const objs = fabricCanvasInstance.getObjects?.() || [];
+      const colors = new Set();
+      objs.forEach((o) => {
+        if (o.stroke && typeof o.stroke === 'string' && o.stroke !== 'transparent') {
+          colors.add(o.stroke);
+        }
+      });
+      if (colors.size > 0) return Array.from(colors);
+    } catch (e) {
+      // ignore
+    }
+    return ['#38BDF8', '#FACC15', '#FFFFFF', '#F43F5E'];
+  }, [fabricCanvasInstance]);
 
   const colorPalettes = [
     { name: 'Chalk White', hex: '#FFFFFF', category: 'chalk' },
@@ -150,7 +175,13 @@ export default function Toolbar({ onUndo, onRedo, onClear, onOpenLayers }) {
             <button
               key={t.id}
               onClick={() => {
-                setActiveTool(t.id);
+                if (handleToolSelect) {
+                  handleToolSelect(t.id);
+                } else if (activeTool === t.id) {
+                  setActiveTool('select');
+                } else {
+                  setActiveTool(t.id);
+                }
                 if (t.id === 'denim' && !brushColor.startsWith('#1e') && !brushColor.startsWith('#60')) {
                   setBrushColor('#1E3A8A');
                 } else if (t.id === 'watercolor' && brushColor === '#FFFFFF') {
@@ -324,9 +355,47 @@ export default function Toolbar({ onUndo, onRedo, onClear, onOpenLayers }) {
         </button>
       </div>
 
-      {/* 6. Infrared Guide Toggle for Shears */}
+      {/* 6. Scissors Target Cut Color & Infrared Guide (Requirement 6) */}
       {activeTool === 'shears' && (
-        <div className="flex items-center gap-1 border-r border-slate-800/80 pr-2">
+        <div className="flex items-center gap-1.5 border-r border-slate-800/80 pr-2">
+          {/* Target Cut Color Selector */}
+          <div className="flex items-center gap-1 bg-slate-950/70 px-2 py-1 rounded-xl border border-slate-800 text-[11px]">
+            <span className="text-slate-400 font-medium">Cut Color:</span>
+            <div className="flex items-center gap-1">
+              {autoDetectedColors.map((col) => (
+                <button
+                  key={col}
+                  onClick={() => setTargetCutColor(col)}
+                  style={{ backgroundColor: col }}
+                  className={`w-3.5 h-3.5 rounded-full border transition-all ${
+                    targetCutColor === col
+                      ? 'ring-2 ring-rose-400 scale-125 border-white shadow'
+                      : 'border-slate-600 opacity-70 hover:opacity-100'
+                  }`}
+                  title={`Target Cut Color: ${col}`}
+                />
+              ))}
+            </div>
+            <button
+              onClick={() => setIsEyedropperActive(!isEyedropperActive)}
+              className={`p-1 rounded transition-colors ${
+                isEyedropperActive
+                  ? 'bg-rose-500 text-white'
+                  : 'text-slate-400 hover:text-white bg-slate-800'
+              }`}
+              title="Eyedropper: Click on any stroke on the canvas to extract target cut color"
+            >
+              <Pipette className="w-3 h-3" />
+            </button>
+            <input
+              type="color"
+              value={targetCutColor || '#F43F5E'}
+              onChange={(e) => setTargetCutColor(e.target.value)}
+              className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
+              title="Manual Color Picker"
+            />
+          </div>
+
           <button
             onClick={() => setInfraredGuideActive((v) => !v)}
             className={`px-2 py-1 rounded-xl text-[11px] font-mono flex items-center gap-1 transition-all ${

@@ -96,25 +96,42 @@ export default function CADHeaderBar({
 
       {/* Controls & Export Trigger */}
       <div className="flex items-center gap-2">
-        {/* Undo / Redo */}
-        <div className="flex items-center gap-0.5 mr-0.5">
+        {/* Undo / Redo & Layers */}
+        <div className="hidden sm:flex items-center gap-1 bg-[#1C1D20] p-0.5 rounded-lg border border-[#2A2B2E]">
           <button
             onClick={onUndo}
             disabled={!canUndo}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[#8A8B93] hover:text-[#EDEDF0] hover:bg-[#202225] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Undo"
+            className={`p-1.5 rounded-md transition-colors ${
+              canUndo
+                ? 'text-[#EDEDF0] hover:bg-[#282A2E] hover:text-[#C5A059]'
+                : 'text-[#5A5B63] cursor-not-allowed opacity-50'
+            }`}
+            title="Undo (Ctrl+Z)"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={onRedo}
             disabled={!canRedo}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[#8A8B93] hover:text-[#EDEDF0] hover:bg-[#202225] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-            title="Redo"
+            className={`p-1.5 rounded-md transition-colors ${
+              canRedo
+                ? 'text-[#EDEDF0] hover:bg-[#282A2E] hover:text-[#C5A059]'
+                : 'text-[#5A5B63] cursor-not-allowed opacity-50'
+            }`}
+            title="Redo (Ctrl+Y)"
           >
             <RotateCw className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        <button
+          onClick={onOpenAdvancedOptions}
+          className="flex items-center gap-1.5 bg-[#1C1D20] hover:bg-[#25272B] text-[#EDEDF0] font-medium text-xs px-2.5 py-1.5 rounded-lg border border-[#2A2B2E] hover:border-[#383A3E] transition-colors"
+          title="Toggle Layers"
+        >
+          <Layers className="w-3.5 h-3.5 text-[#C5A059]" />
+          <span className="hidden md:inline">Layers</span>
+        </button>
 
         {/* Units Toggle */}
         <button

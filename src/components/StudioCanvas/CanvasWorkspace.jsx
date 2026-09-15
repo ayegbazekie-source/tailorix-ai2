@@ -103,6 +103,13 @@ export default function CanvasWorkspace({ onOpenLayers }) {
     zoomOut,
     resetZoom,
 
+    // Scissors & Color Picker
+    targetCutColor,
+    setTargetCutColor,
+    isEyedropperActive,
+    setIsEyedropperActive,
+    setFabricCanvasInstance,
+
     // 8-Ruler Toolbox
     rulers,
     activeRulerId,
@@ -209,6 +216,9 @@ export default function CanvasWorkspace({ onOpenLayers }) {
         });
 
         fabricCanvasRef.current = canvasInstance;
+        if (setFabricCanvasInstance) {
+          setFabricCanvasInstance(canvasInstance);
+        }
 
         // Configure Drawing Brush with steady line stabilization
         if (canvasInstance.freeDrawingBrush) {
@@ -216,6 +226,41 @@ export default function CanvasWorkspace({ onOpenLayers }) {
           canvasInstance.freeDrawingBrush.width = brushWidth || 4;
           canvasInstance.freeDrawingBrush.decimate = 8;
         }
+
+        // Touch Gestures: Pinch-Zoom & Multi-Finger Pan (Requirement 5)
+        canvasInstance.on('touch:gesture', (e) => {
+          if (e.e && e.e.touches && e.e.touches.length === 2 && e.self) {
+            const point = new Fabric.Point(e.self.x, e.self.y);
+            let zoom = canvasInstance.getZoom() * (e.self.scale || 1);
+            zoom = Math.max(0.1, Math.min(zoom, 5));
+            canvasInstance.zoomToPoint(point, zoom);
+            if (setZoomLevel) setZoomLevel(Math.round(zoom * 100));
+            e.e.preventDefault?.();
+            e.e.stopPropagation?.();
+          }
+        });
+
+        canvasInstance.on('touch:drag', (e) => {
+          if (e.e && e.e.touches && e.e.touches.length === 2 && e.self) {
+            const vpt = canvasInstance.viewportTransform;
+            if (vpt && e.self.previousX !== undefined && e.self.previousY !== undefined) {
+              vpt[4] += e.self.x - e.self.previousX;
+              vpt[5] += e.self.y - e.self.previousY;
+              canvasInstance.requestRenderAll();
+            }
+          }
+        });
+
+        // Eyedropper sampling on click (Requirement 6)
+        canvasInstance.on('mouse:down', (opt) => {
+          if (opt && opt.target) {
+            const stroke = opt.target.stroke || opt.target.fill;
+            if (stroke && typeof stroke === 'string' && stroke !== 'transparent') {
+              if (setTargetCutColor) setTargetCutColor(stroke);
+              if (setIsEyedropperActive) setIsEyedropperActive(false);
+            }
+          }
+        });
 
         saveState();
 
@@ -276,8 +321,8 @@ export default function CanvasWorkspace({ onOpenLayers }) {
           canvas.freeDrawingBrush.strokeDashArray = null;
         }
       } else if (activeTool === 'pen') {
-        canvas.freeDrawingBrush.color = brushColor || '#1E293B';
-        canvas.freeDrawingBrush.width = 2;
+        canvas.freeDrawingBrush.color = brushColor || '#000000';
+        canvas.freeDrawingBrush.width = brushWidth || 2;
         canvas.freeDrawingBrush.decimate = 4;
         if (strokeDashStyle === 'dashed' || isDashedSeamAllowance) {
           canvas.freeDrawingBrush.strokeDashArray = [6, 4];
@@ -295,14 +340,14 @@ export default function CanvasWorkspace({ onOpenLayers }) {
         canvas.freeDrawingBrush.decimate = 12;
         canvas.freeDrawingBrush.strokeDashArray = null;
       } else if (activeTool === 'shears') {
-        // Shears cutting stroke: dashed cutting line
-        canvas.freeDrawingBrush.color = '#F43F5E';
+        // Shears cutting stroke: dashed cutting line matching targetCutColor
+        canvas.freeDrawingBrush.color = targetCutColor || '#F43F5E';
         canvas.freeDrawingBrush.width = 3;
         canvas.freeDrawingBrush.decimate = 6;
-        canvas.freeDrawingBrush.strokeDashArray = [6, 4];
+        canvas.freeDrawingBrush.strokeDashArray = [8, 4];
       }
     }
-  }, [activeTool, brushColor, brushWidth, brushType, strokeDashStyle, isDashedSeamAllowance]);
+  }, [activeTool, brushColor, brushWidth, brushType, strokeDashStyle, isDashedSeamAllowance, targetCutColor]);
 
   // -------------------------------------------------------------
   // Stamp Rulers onto Active Canvas (Broken/Dashed Seam Allowance)
@@ -562,7 +607,7 @@ export default function CanvasWorkspace({ onOpenLayers }) {
       onMouseDown={handleBoardMouseDown}
       onMouseMove={handleBoardMouseMove}
       onMouseUp={handleBoardMouseUp}
-      className={`relative w-full h-[calc(100vh-64px)] bg-slate-950 overflow-hidden select-none ${
+      className={`relative flex-1 w-full h-full min-h-0 bg-slate-950 overflow-hidden select-none ${
         activeTool === 'draw_cut_sheet' ? 'cursor-crosshair' : 'cursor-default'
       }`}
       id="tailorix-studio-workspace"

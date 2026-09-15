@@ -333,14 +333,67 @@ export const CanvasProvider = ({ children }) => {
   const [infraredGuideActive, setInfraredGuideActive] = useState(true);
   const [showAdvancedDrawer, setShowAdvancedDrawer] = useState(false);
 
+  // -------------------------------------------------------------
+  // 8. Scissors Target Cut Color & Eyedropper State (Requirement 6)
+  // -------------------------------------------------------------
+  const [targetCutColor, setTargetCutColor] = useState('#38bdf8');
+  const [isEyedropperActive, setIsEyedropperActive] = useState(false);
+  const [fabricCanvasInstance, setFabricCanvasInstance] = useState(null);
+
+  // Requirement 4: Tool Unselect Toggle Logic
+  const handleToolSelect = useCallback((toolName) => {
+    if (activeTool === toolName) {
+      setActiveTool('select'); // Default back to selection / pan mode
+      if (fabricCanvasInstance) {
+        fabricCanvasInstance.isDrawingMode = false;
+      }
+    } else {
+      setActiveTool(toolName);
+      if (fabricCanvasInstance) {
+        fabricCanvasInstance.isDrawingMode = (toolName === 'pen' || toolName === 'chalk');
+      }
+    }
+  }, [activeTool, fabricCanvasInstance]);
+
+  // Requirement 7: "Shift Fabric on Table" Motion Controls
+  const shiftFabricOnTable = useCallback((direction, stepDistance = 20) => {
+    if (!fabricCanvasInstance) return;
+    const fabricLayer = fabricCanvasInstance.getObjects?.().find((obj) => obj.isFabricTextureLayer);
+    if (!fabricLayer) return;
+
+    switch (direction) {
+      case 'left':
+        fabricLayer.set('left', fabricLayer.left - stepDistance);
+        break;
+      case 'right':
+        fabricLayer.set('left', fabricLayer.left + stepDistance);
+        break;
+      case 'up':
+        fabricLayer.set('top', fabricLayer.top - stepDistance);
+        break;
+      case 'down':
+        fabricLayer.set('top', fabricLayer.top + stepDistance);
+        break;
+    }
+    fabricLayer.setCoords();
+    fabricCanvasInstance.renderAll();
+  }, [fabricCanvasInstance]);
+
   return (
     <CanvasContext.Provider
       value={{
         // Tools & Brushes
         activeTool, setActiveTool,
+        handleToolSelect,
         brushType, setBrushType,
         brushColor, setBrushColor,
         brushWidth, setBrushWidth,
+
+        // Scissors Color Selection & Eyedropper
+        targetCutColor, setTargetCutColor,
+        isEyedropperActive, setIsEyedropperActive,
+        fabricCanvasInstance, setFabricCanvasInstance,
+        shiftFabricOnTable,
 
         // Layer Panel
         isLayerPanelOpen, setIsLayerPanelOpen,

@@ -72,6 +72,7 @@ import TailorRulerOverlay from './TailorRulerOverlay';
 import DraftingToolboxDrawer from './DraftingToolboxDrawer';
 import CuttingSheetItem from './CuttingSheetItem';
 import MagnifyingGlassLoupe from './MagnifyingGlassLoupe';
+import BigCuttingTable from './BigCuttingTable';
 import {
   TAILOR_RULERS_CATALOG,
   TAILOR_RULER_LIST,
@@ -350,6 +351,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   const canvasSvgRef = useRef(null);
   const containerRef = useRef(null);
+  const bigCuttingTableRef = useRef(null);
+  const [cuttingCanUndo, setCuttingCanUndo] = useState(false);
+  const [cuttingCanRedo, setCuttingCanRedo] = useState(false);
 
   // -------------------------------------------------------------------------
   // 6. Clean Blank Workspace on Load (Strict User Requirement)
@@ -357,15 +361,49 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   // and stays collapsed until the user explicitly requests it or adds elements.
   // -------------------------------------------------------------------------
   useEffect(() => {
-    // Keep canvas pristine and empty on initial load
-    setLayers([]);
-    setActiveLayerId(null);
+    // Keep canvas pristine and empty on initial load, unless user has active session work
+    try {
+      const savedLayers = sessionStorage.getItem('tailorix_session_layers');
+      const savedSheets = sessionStorage.getItem('tailorix_session_sheets');
+      if (savedLayers) {
+        const parsed = JSON.parse(savedLayers);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setLayers(parsed);
+          setActiveLayerId(parsed[0]?.id || null);
+        }
+      }
+      if (savedSheets) {
+        const parsedSheets = JSON.parse(savedSheets);
+        if (Array.isArray(parsedSheets) && parsedSheets.length > 0) {
+          setCuttingSheets(parsedSheets);
+          setSelectedCuttingSheetId(parsedSheets[0]?.id || null);
+        }
+      }
+    } catch (e) {
+      console.warn('Session sync fallback', e);
+    }
     setActiveRulers([]);
     setSelectedRulerId(null);
-    setCuttingSheets([]);
-    setSelectedCuttingSheetId(null);
     setShowLayerPanel(false);
   }, []);
+
+  // Save session work on state update
+  useEffect(() => {
+    if (layers && layers.length > 0) {
+      try {
+        sessionStorage.setItem('tailorix_session_layers', JSON.stringify(layers));
+      } catch (e) {}
+    }
+  }, [layers]);
+
+  useEffect(() => {
+    if (cuttingSheets && cuttingSheets.length > 0) {
+      try {
+        sessionStorage.setItem('tailorix_session_sheets', JSON.stringify(cuttingSheets));
+      } catch (e) {}
+    }
+  }, [cuttingSheets]);
+
 
   const handleManualImportPhotoPattern = () => {
     try {
@@ -498,6 +536,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       return next.length > 40 ? next.slice(next.length - 40) : next;
     });
     setRedoStack([]);
+  };
+
+  const handleToggleLayersHeader = () => {
+    if (activeSubTab === 'cutting') {
+      if (bigCuttingTableRef.current?.toggleLayers) {
+        bigCuttingTableRef.current.toggleLayers();
+      } else {
+        setShowLayerPanel((v) => !v);
+      }
+      return;
+    }
+    setShowLayerPanel((v) => !v);
   };
 
   const toggleLayerVisibility = (id) => {
@@ -1956,6 +2006,12 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   // Selecting any of these toggles will undo/redo the last change across layers or sub-layers
   // -------------------------------------------------------------------------
   const handleUndo = () => {
+    if (activeSubTab === 'cutting') {
+      if (bigCuttingTableRef.current?.handleUndo) {
+        bigCuttingTableRef.current.handleUndo();
+      }
+      return;
+    }
     if (undoStack.length === 0) return;
     const currentSnapshot = {
       layers: JSON.parse(JSON.stringify(layers)),
@@ -1974,6 +2030,12 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   };
 
   const handleRedo = () => {
+    if (activeSubTab === 'cutting') {
+      if (bigCuttingTableRef.current?.handleRedo) {
+        bigCuttingTableRef.current.handleRedo();
+      }
+      return;
+    }
     if (redoStack.length === 0) return;
     const currentSnapshot = {
       layers: JSON.parse(JSON.stringify(layers)),
@@ -2010,7 +2072,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undoStack, redoStack, layers, cuttingSheets, activeLayerId, selectedElementId]);
+  }, [undoStack, redoStack, layers, cuttingSheets, activeLayerId, selectedElementId, activeSubTab]);
 
   // -------------------------------------------------------------------------
   // 12. Convert Stroke Points to SVG Path
@@ -2166,14 +2228,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-black text-xs shadow-gold-sm">
               TX
             </div>
-            <div className="hidden sm:block">
-              <h1 className="text-xs font-bold text-slate-200 tracking-tight leading-none">
-                Bespoke Drafting Board
-              </h1>
-              <span className="text-[10px] text-amber-500 font-mono tracking-wider uppercase">
-                Pattern & Cutting Studio
-              </span>
-            </div>
           </div>
 
           {/* SUB-TABS: Pattern Drafting Board FIRST, Cutting Table SECOND */}
@@ -2206,51 +2260,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
         {/* Dynamic Contextual Action Buttons depending on Active Sub-Tab */}
         <div className="flex items-center gap-2">
-          {/* CUTTING TABLE SPECIFIC ACTIONS */}
-          {activeSubTab === 'cutting' && (
-            <div className="flex items-center gap-2">
-              {/* Fabric Preset Selector */}
-              <div className="hidden lg:flex items-center gap-1.5 bg-[#060912] border border-slate-800 px-2 py-1 rounded-lg text-xs">
-                <Palette className="w-3.5 h-3.5 text-amber-400" />
-                <select
-                  value={fabricPresetId}
-                  onChange={(e) => {
-                    setFabricPresetId(e.target.value);
-                    setFabricTexture(null);
-                  }}
-                  className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer"
-                >
-                  {FABRIC_PRESETS.map((fp) => (
-                    <option key={fp.id} value={fp.id} className="bg-slate-900 text-slate-200">
-                      {fp.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Upload Fabric Texture File */}
-              <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[#060912] hover:bg-slate-800/80 text-xs font-semibold text-amber-400 rounded-lg cursor-pointer border border-amber-500/30 transition-all shadow-xs">
-                <Upload className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Upload Fabric</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFabricUpload}
-                  className="hidden"
-                />
-              </label>
-
-              {/* Import Drafted Bodice Button */}
-              <button
-                onClick={() => setShowPatternOverlay(!showPatternOverlay)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold rounded-lg border border-amber-500/50 transition-all shadow-xs"
-              >
-                <Layers className="w-3.5 h-3.5 text-amber-400" />
-                <span>Import Drafted Bodice</span>
-              </button>
-            </div>
-          )}
-
           {/* DRAFTING BOARD SPECIFIC ACTIONS: BODICE BUTTONS SPAWN CUTTING SHEETS */}
           {activeSubTab === 'drafting' && (
             <div className="flex items-center gap-1 bg-[#060912] border border-amber-500/40 rounded-xl p-1 shadow-xs">
@@ -2342,38 +2351,52 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </div>
           )}
 
-          {/* Undo / Redo */}
-          <div className="flex items-center bg-[#060912] border border-slate-800 rounded-lg p-0.5 text-slate-400">
+          {/* Undo, Redo, and Layers Section Controls (Active on both Pattern Drafting Board & Cutting Table) */}
+          <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800/90">
             <button
               onClick={handleUndo}
-              disabled={undoStack.length === 0}
-              className="p-1.5 hover:text-slate-100 hover:bg-slate-800 rounded transition-all disabled:opacity-30"
-              title="Undo Stroke"
+              disabled={activeSubTab === 'cutting' ? !cuttingCanUndo : undoStack.length === 0}
+              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                (activeSubTab === 'cutting' ? cuttingCanUndo : undoStack.length > 0)
+                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
+                  : 'text-slate-600 cursor-not-allowed'
+              }`}
+              title="Undo recent action (Ctrl+Z)"
             >
               <Undo2 className="w-3.5 h-3.5" />
+              <span className="text-[11px] hidden md:inline">Undo</span>
             </button>
+
             <button
               onClick={handleRedo}
-              disabled={redoStack.length === 0}
-              className="p-1.5 hover:text-slate-100 hover:bg-slate-800 rounded transition-all disabled:opacity-30"
-              title="Redo Stroke"
+              disabled={activeSubTab === 'cutting' ? !cuttingCanRedo : redoStack.length === 0}
+              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                (activeSubTab === 'cutting' ? cuttingCanRedo : redoStack.length > 0)
+                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
+                  : 'text-slate-600 cursor-not-allowed'
+              }`}
+              title="Redo action (Ctrl+Y)"
             >
               <Redo2 className="w-3.5 h-3.5" />
+              <span className="text-[11px] hidden md:inline">Redo</span>
             </button>
           </div>
 
-          {/* Layer Panel Toggle */}
+          {/* Layers Section Icon */}
           <button
-            onClick={() => setShowLayerPanel((v) => !v)}
-            className={`p-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 ${
-              showLayerPanel
-                ? 'bg-amber-500 text-slate-950 border-amber-400'
-                : 'bg-[#060912] border-slate-800 text-slate-300 hover:bg-slate-800/60'
+            onClick={handleToggleLayersHeader}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+              (activeSubTab === 'cutting' ? true : showLayerPanel)
+                ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
+                : 'bg-[#060912] hover:bg-slate-800 border-slate-800 text-slate-300 hover:text-white'
             }`}
-            title="Toggle Autodesk SketchBook Layer Stack"
+            title="Toggle Layers & Pattern Inspector"
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span className="hidden xl:inline">Layers</span>
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Layers</span>
+            <span className="text-[10px] text-amber-400/80 font-mono">
+              ({activeSubTab === 'cutting' ? 'Flat' : layers.length})
+            </span>
           </button>
 
           {/* Advanced Tailor Options Drawer Trigger */}
@@ -2411,9 +2434,24 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       )}
 
       {/* ========================================================================= */}
-      {/* 2. MAIN WORKSPACE FRAME                                                   */}
+      {/* 2. MAIN WORKSPACE FRAME (DRAFTING BOARD OR BIG CUTTING TABLE)             */}
       {/* ========================================================================= */}
-      <div className="relative flex-1 flex overflow-hidden" ref={containerRef}>
+      {activeSubTab === 'cutting' ? (
+        <div className="relative flex-1 w-full h-full overflow-hidden flex flex-col">
+          <BigCuttingTable
+            ref={bigCuttingTableRef}
+            layers={layers}
+            cuttingSheets={cuttingSheets}
+            onUpdateCuttingSheet={handleUpdateCuttingSheet}
+            onNavigateToDrafting={() => handleSelectSubTab('drafting')}
+            onHistoryChange={({ canUndo, canRedo }) => {
+              setCuttingCanUndo(canUndo);
+              setCuttingCanRedo(canRedo);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="relative flex-1 w-full h-full overflow-hidden" ref={containerRef}>
         {/* ======================================================================= */}
         {/* SKETCHBOOK TOOLS SIDEBAR (Collapsible Floating Panel)                   */}
         {/* ======================================================================= */}
@@ -3283,6 +3321,25 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             title="Move this Layer collectively with all sub-layers (Move Tool)"
                           >
                             <Move className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Rotate Layer Shortcut */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveLayerId(layer.id);
+                              setLayers((prev) =>
+                                prev.map((l) =>
+                                  l.id === layer.id
+                                    ? { ...l, rotation: ((l.rotation || 0) + 15) % 360 }
+                                    : l
+                                )
+                              );
+                            }}
+                            className="p-1 hover:text-amber-300 text-slate-400 rounded"
+                            title="Rotate this Layer (+15°)"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
                           </button>
 
                           {/* Broken Seam Allowance Outline */}
@@ -5094,6 +5151,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           )}
         </div>
       </div>
+    )}
 
       {/* ========================================================================= */}
       {/* 3. EXPORT MODAL                                                           */}

@@ -18,7 +18,7 @@
  *  - Advanced Tailor Options Drawer integration (DXF, seam allowance, node coordinates)
  */
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Scissors,
@@ -177,11 +177,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   const handleSelectSubTab = (tab) => {
     setActiveSubTab(tab);
-    if (tab === 'drafting' && location.pathname !== '/cad') {
-      navigate('/cad');
-    } else if (tab === 'cutting' && location.pathname !== '/studio') {
-      navigate('/studio');
-    }
+    try {
+      window.history.replaceState(null, '', tab === 'cutting' ? '/studio' : '/cad');
+    } catch (e) {}
   };
 
   // -------------------------------------------------------------------------
@@ -354,6 +352,36 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const bigCuttingTableRef = useRef(null);
   const [cuttingCanUndo, setCuttingCanUndo] = useState(false);
   const [cuttingCanRedo, setCuttingCanRedo] = useState(false);
+  const [cuttingShowLayers, setCuttingShowLayers] = useState(false);
+  const [isFabricMoveEnabled, setIsFabricMoveEnabled] = useState(false);
+  const [isFabricVisible, setIsFabricVisible] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('tailorix_session_fabric_visible');
+      if (saved !== null) return JSON.parse(saved);
+    } catch {}
+    return false; // Clean green rack by default on initial/new workspace
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tailorix_session_fabric_visible', JSON.stringify(isFabricVisible));
+    } catch {}
+  }, [isFabricVisible]);
+
+  const handleCuttingHistoryChange = useCallback(
+    ({ canUndo, canRedo, showLayers, isMoveEnabled, isFabricVisible: fVis }) => {
+      setCuttingCanUndo((prev) => (prev !== canUndo ? canUndo : prev));
+      setCuttingCanRedo((prev) => (prev !== canRedo ? canRedo : prev));
+      setCuttingShowLayers((prev) => (prev !== showLayers ? showLayers : prev));
+      if (isMoveEnabled !== undefined) {
+        setIsFabricMoveEnabled((prev) => (prev !== isMoveEnabled ? isMoveEnabled : prev));
+      }
+      if (fVis !== undefined) {
+        setIsFabricVisible((prev) => (prev !== fVis ? fVis : prev));
+      }
+    },
+    []
+  );
 
   // -------------------------------------------------------------------------
   // 6. Clean Blank Workspace on Load (Strict User Requirement)
@@ -543,7 +571,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       if (bigCuttingTableRef.current?.toggleLayers) {
         bigCuttingTableRef.current.toggleLayers();
       } else {
-        setShowLayerPanel((v) => !v);
+        setCuttingShowLayers((v) => !v);
       }
       return;
     }
@@ -803,25 +831,24 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   // Import a drafted layer bodice onto the Cutting Table
   const handleImportBodiceToCuttingTable = (layer) => {
-    const newPiece = {
-      id: `cut_piece_${Date.now()}_${layer.id}`,
-      layerId: layer.id,
-      name: layer.name,
-      bodiceType: layer.bodiceType,
-      svgPath: layer.piece?.svgPath || layer.piece?.path || 'M 0 0 L 160 0 L 180 220 L 20 220 Z',
-      seamAllowancePath: layer.piece?.seamAllowancePath || null,
-      seamAllowance: layer.piece?.seamAllowance ?? 0.5,
-      grainline: layer.piece?.grainline || { label: 'WARP GRAIN' },
-      bounds: layer.piece?.bounds || { width: 180, height: 240 },
-      x: 100 + (cuttingTablePieces.length % 3) * 220,
-      y: 80 + Math.floor(cuttingTablePieces.length / 3) * 260,
-      rotation: 0,
-      cutComplete: false,
-    };
+    if (!layer) return;
+    handleSelectSubTab('cutting');
+    setTimeout(() => {
+      if (bigCuttingTableRef.current?.importLayer) {
+        bigCuttingTableRef.current.importLayer(layer);
+      }
+    }, 60);
+  };
 
-    setCuttingTablePieces((prev) => [...prev, newPiece]);
-    setSelectedCuttingPieceId(newPiece.id);
-    setShowPatternOverlay(false);
+  // Import a cutting sheet directly onto the Cutting Table
+  const handleImportSheetToCuttingTable = (sheetId) => {
+    if (!sheetId) return;
+    handleSelectSubTab('cutting');
+    setTimeout(() => {
+      if (bigCuttingTableRef.current?.importSheet) {
+        bigCuttingTableRef.current.importSheet(sheetId);
+      }
+    }, 60);
   };
 
   // -------------------------------------------------------------------------
@@ -1175,25 +1202,44 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     const currentLayer = ensureActiveLayer();
     if (!currentLayer || currentLayer.locked || !currentLayer.visible) return;
 
+    const baseId = `stroke_ruler_snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const originalPoints = points.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }));
     const seamStroke = {
-      id: `stroke_ruler_snap_${Date.now()}`,
+      id: baseId,
       tool: activeTool === 'scissors' ? 'scissors' : 'pen',
-      points: points.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 })),
+      points: originalPoints,
       color: activeTool === 'chalk' ? '#facc15' : brushColor,
       size: Math.max(2, brushSize),
       opacity: 1.0,
       visible: true,
       isRulerLine: true,
       rulerName: rulerName,
-      symmetry: symmetryEnabled,
-      symmetryAxisX: symmetryAxisX,
       label: `Snapped ${rulerName}`,
+      createdAt: Date.now(),
+      lastMovedAt: Date.now(),
+      positionLocked: false,
     };
+
+    const elementsToAdd = [seamStroke];
+
+    if (symmetryEnabled && typeof symmetryAxisX === 'number') {
+      const mirroredPoints = originalPoints.map((p) => ({
+        x: Math.round((2 * symmetryAxisX - p.x) * 10) / 10,
+        y: p.y,
+      }));
+      elementsToAdd.push({
+        ...seamStroke,
+        id: `${baseId}_mirror`,
+        points: mirroredPoints,
+        isMirroredCopy: true,
+        sourceStrokeId: baseId,
+      });
+    }
 
     pushUndoSnapshot();
     setLayers((prev) =>
       prev.map((l) =>
-        l.id === currentLayer.id ? { ...l, elements: [...l.elements, seamStroke] } : l
+        l.id === currentLayer.id ? { ...l, elements: [...l.elements, ...elementsToAdd] } : l
       )
     );
   };
@@ -1481,8 +1527,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     // TOOL: DART MARKER (Reduced dart size per user specification)
     if (activeTool === 'dart_marker') {
       pushUndoSnapshot();
+      const baseId = `dart_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const dartStroke = {
-        id: `dart_${Date.now()}`,
+        id: baseId,
         tool: 'dart_marker',
         apex: { x, y },
         legs: [
@@ -1500,9 +1547,26 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         positionLocked: false,
       };
 
+      const elementsToAdd = [dartStroke];
+
+      if (symmetryEnabled && typeof symmetryAxisX === 'number') {
+        const mirroredApexX = Math.round((2 * symmetryAxisX - x) * 10) / 10;
+        elementsToAdd.push({
+          ...dartStroke,
+          id: `${baseId}_mirror`,
+          apex: { x: mirroredApexX, y },
+          legs: dartStroke.legs.map((p) => ({
+            x: Math.round((2 * symmetryAxisX - p.x) * 10) / 10,
+            y: p.y,
+          })),
+          isMirroredCopy: true,
+          sourceStrokeId: baseId,
+        });
+      }
+
       setLayers((prev) =>
         prev.map((l) =>
-          l.id === currentLayer.id ? { ...l, elements: [...l.elements, dartStroke] } : l
+          l.id === currentLayer.id ? { ...l, elements: [...l.elements, ...elementsToAdd] } : l
         )
       );
       return;
@@ -1982,18 +2046,51 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       }
 
       pushUndoSnapshot();
+      const baseId = currentStroke.id || `stroke_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const originalPoints = currentStroke.points.map((p) => ({
+        x: Math.round(p.x * 10) / 10,
+        y: Math.round(p.y * 10) / 10,
+      }));
+
       const strokeToCommit = {
         ...currentStroke,
+        id: baseId,
         visible: true,
-        pathData: renderPointsToPath(currentStroke.points),
+        points: originalPoints,
+        pathData: renderPointsToPath(originalPoints),
         createdAt: Date.now(),
         lastMovedAt: Date.now(),
         positionLocked: false,
       };
-      // Commit stroke to active layer
+
+      const elementsToAdd = [strokeToCommit];
+
+      // Mirror Tool deterministic copy: x' = 2M - x
+      if (symmetryEnabled && typeof symmetryAxisX === 'number') {
+        const mirroredPoints = originalPoints.map((pt) => ({
+          x: Math.round((2 * symmetryAxisX - pt.x) * 10) / 10,
+          y: pt.y,
+        }));
+
+        const mirroredStroke = {
+          ...currentStroke,
+          id: `${baseId}_mirror`,
+          visible: true,
+          points: mirroredPoints,
+          pathData: renderPointsToPath(mirroredPoints),
+          createdAt: Date.now(),
+          lastMovedAt: Date.now(),
+          positionLocked: false,
+          isMirroredCopy: true,
+          sourceStrokeId: baseId,
+        };
+        elementsToAdd.push(mirroredStroke);
+      }
+
+      // Commit stroke(s) to active layer
       setLayers((prev) =>
         prev.map((l) =>
-          l.id === targetLayer.id ? { ...l, elements: [...l.elements, strokeToCommit] } : l
+          l.id === targetLayer.id ? { ...l, elements: [...l.elements, ...elementsToAdd] } : l
         )
       );
       setRedoStack([]);
@@ -2351,6 +2448,67 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </div>
           )}
 
+          {/* CUTTING TABLE SPECIFIC ACTIONS IN HEADER */}
+          {activeSubTab === 'cutting' && (
+            <div className="flex items-center gap-1.5 bg-[#060912] border border-amber-500/40 rounded-xl p-1 shadow-xs">
+              {/* Move Fabric Toggle (Requirement: movement of fabric only happens when Move toggle button is turned on at the header section) */}
+              <button
+                id="header-move-fabric-toggle-btn"
+                onClick={() => {
+                  if (bigCuttingTableRef.current?.toggleMoveMode) {
+                    bigCuttingTableRef.current.toggleMoveMode();
+                  } else {
+                    setIsFabricMoveEnabled((prev) => !prev);
+                  }
+                }}
+                className={`px-3 py-1 text-xs rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+                  isFabricMoveEnabled
+                    ? 'bg-amber-400 text-slate-950 shadow-gold-sm ring-2 ring-amber-300'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+                }`}
+                title="Toggle Move Tool: When ON, you can freely drag and rotate fabric, cutting sheets, and patterns on the rack. When OFF, objects remain strictly stationary."
+              >
+                <Move className={`w-3.5 h-3.5 ${isFabricMoveEnabled ? 'text-slate-950' : 'text-amber-400'}`} />
+                <span>Move Objects</span>
+                <span className={`text-[10px] px-1 py-0.2 rounded font-mono font-black ${
+                  isFabricMoveEnabled ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {isFabricMoveEnabled ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Hide / Show Fabric Toggle (Requirement: green rack is table to cut sheets on, fabric can be hidden) */}
+              <button
+                id="header-toggle-fabric-visible-btn"
+                onClick={() => {
+                  if (bigCuttingTableRef.current?.toggleFabricVisibility) {
+                    bigCuttingTableRef.current.toggleFabricVisibility();
+                  } else {
+                    setIsFabricVisible((prev) => !prev);
+                  }
+                }}
+                className={`px-2.5 py-1 text-xs rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+                  isFabricVisible
+                    ? 'text-slate-300 hover:text-white hover:bg-slate-800'
+                    : 'bg-emerald-500 text-slate-950 shadow-sm ring-1 ring-emerald-400'
+                }`}
+                title="Toggle Fabric Overlayer: Hide fabric to cut sheets directly on the green rack atelier table"
+              >
+                {isFabricVisible ? (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="hidden sm:inline">Hide Fabric</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Green Rack Active</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Undo, Redo, and Layers Section Controls (Active on both Pattern Drafting Board & Cutting Table) */}
           <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800/90">
             <button
@@ -2358,8 +2516,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               disabled={activeSubTab === 'cutting' ? !cuttingCanUndo : undoStack.length === 0}
               className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                 (activeSubTab === 'cutting' ? cuttingCanUndo : undoStack.length > 0)
-                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
-                  : 'text-slate-600 cursor-not-allowed'
+                  ? 'text-slate-200 hover:text-white hover:bg-slate-800 cursor-pointer'
+                  : 'text-slate-600 cursor-not-allowed opacity-40'
               }`}
               title="Undo recent action (Ctrl+Z)"
             >
@@ -2372,8 +2530,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               disabled={activeSubTab === 'cutting' ? !cuttingCanRedo : redoStack.length === 0}
               className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                 (activeSubTab === 'cutting' ? cuttingCanRedo : redoStack.length > 0)
-                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
-                  : 'text-slate-600 cursor-not-allowed'
+                  ? 'text-slate-200 hover:text-white hover:bg-slate-800 cursor-pointer'
+                  : 'text-slate-600 cursor-not-allowed opacity-40'
               }`}
               title="Redo action (Ctrl+Y)"
             >
@@ -2385,8 +2543,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           {/* Layers Section Icon */}
           <button
             onClick={handleToggleLayersHeader}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-              (activeSubTab === 'cutting' ? true : showLayerPanel)
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+              (activeSubTab === 'cutting' ? cuttingShowLayers : showLayerPanel)
                 ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
                 : 'bg-[#060912] hover:bg-slate-800 border-slate-800 text-slate-300 hover:text-white'
             }`}
@@ -2395,7 +2553,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             <Layers className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden sm:inline">Layers</span>
             <span className="text-[10px] text-amber-400/80 font-mono">
-              ({activeSubTab === 'cutting' ? 'Flat' : layers.length})
+              ({activeSubTab === 'cutting' ? (cuttingSheets.length + layers.length) : layers.length})
             </span>
           </button>
 
@@ -2434,24 +2592,36 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       )}
 
       {/* ========================================================================= */}
-      {/* 2. MAIN WORKSPACE FRAME (DRAFTING BOARD OR BIG CUTTING TABLE)             */}
+      {/* 2. MAIN WORKSPACE FRAME (DRAFTING BOARD & BIG CUTTING TABLE)             */}
       {/* ========================================================================= */}
-      {activeSubTab === 'cutting' ? (
-        <div className="relative flex-1 w-full h-full overflow-hidden flex flex-col">
-          <BigCuttingTable
-            ref={bigCuttingTableRef}
-            layers={layers}
-            cuttingSheets={cuttingSheets}
-            onUpdateCuttingSheet={handleUpdateCuttingSheet}
-            onNavigateToDrafting={() => handleSelectSubTab('drafting')}
-            onHistoryChange={({ canUndo, canRedo }) => {
-              setCuttingCanUndo(canUndo);
-              setCuttingCanRedo(canRedo);
-            }}
-          />
-        </div>
-      ) : (
-        <div className="relative flex-1 w-full h-full overflow-hidden" ref={containerRef}>
+      <div
+        className="relative flex-1 w-full h-full overflow-hidden flex flex-col"
+        style={{ display: activeSubTab === 'cutting' ? 'flex' : 'none' }}
+      >
+        <BigCuttingTable
+          ref={bigCuttingTableRef}
+          layers={layers}
+          cuttingSheets={cuttingSheets}
+          isFabricMoveEnabled={isFabricMoveEnabled}
+          onToggleFabricMove={(val) => {
+            if (typeof val === 'boolean') {
+              setIsFabricMoveEnabled(val);
+            } else if (bigCuttingTableRef.current?.toggleMoveMode) {
+              bigCuttingTableRef.current.toggleMoveMode();
+            } else {
+              setIsFabricMoveEnabled((prev) => !prev);
+            }
+          }}
+          onUpdateCuttingSheet={handleUpdateCuttingSheet}
+          onNavigateToDrafting={() => handleSelectSubTab('drafting')}
+          onHistoryChange={handleCuttingHistoryChange}
+        />
+      </div>
+
+      <div
+        className="relative flex-1 w-full h-full overflow-hidden"
+        style={{ display: activeSubTab === 'drafting' ? 'block' : 'none' }}
+      >
         {/* ======================================================================= */}
         {/* SKETCHBOOK TOOLS SIDEBAR (Collapsible Floating Panel)                   */}
         {/* ======================================================================= */}
@@ -4015,13 +4185,24 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         )
                       );
 
-                      if (el.pathData) {
+                      if (el.tool !== 'dart_marker') {
+                        // Freehand chalk/pen/scissors/ruler stroke
+                        const points = el.points || [];
+                        const pathStr = points.length > 0
+                          ? renderPointsToPath(
+                              points.map((pt) => ({
+                                x: pt.x - (layer.offsetX || 0),
+                                y: pt.y - (layer.offsetY || 0),
+                              }))
+                            )
+                          : el.pathData || '';
+
                         return (
                           <g key={el.id}>
-                            {/* Selected Halo Outline */}
+                            {/* Selected Halo */}
                             {isSelected && (
                               <path
-                                d={el.pathData}
+                                d={pathStr}
                                 fill="none"
                                 stroke="#f59e0b"
                                 strokeWidth={Math.max(6, el.size + 4)}
@@ -4030,14 +4211,16 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                 strokeLinejoin="round"
                               />
                             )}
+                            {/* Stroke on Sheet */}
                             <path
-                              d={el.pathData}
+                              d={pathStr}
                               fill="none"
                               stroke={isSelected ? '#fbbf24' : el.color}
                               strokeWidth={el.size}
-                              strokeDasharray={el.dashed ? '6 4' : 'none'}
+                              strokeOpacity={el.opacity || 1.0}
                               strokeLinecap="round"
                               strokeLinejoin="round"
+                              strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
                               cursor={isSheetLayer ? 'pointer' : 'default'}
                               onClick={(e) => {
                                 if (isSheetLayer) {
@@ -4047,19 +4230,20 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                 }
                               }}
                             />
-                            {/* Cutting Sheet Mirrored Reflection */}
-                            {isSheetMirrored && sheetFoldX != null && el.points && (
+
+                            {/* Cutting Sheet Mirrored Reflection (if sheet has book-fold mirror active) */}
+                            {isSheetMirrored && sheetFoldX != null && points.length > 0 && !el.isMirroredCopy && (
                               <path
                                 d={renderPointsToPath(
-                                  el.points.map((pt) => ({
-                                    x: 2 * sheetFoldX - pt.x - layer.offsetX,
-                                    y: pt.y - layer.offsetY,
+                                  points.map((pt) => ({
+                                    x: 2 * sheetFoldX - pt.x - (layer.offsetX || 0),
+                                    y: pt.y - (layer.offsetY || 0),
                                   }))
                                 )}
                                 fill="none"
                                 stroke={el.color}
                                 strokeWidth={el.size}
-                                strokeDasharray={el.dashed ? '6 4' : 'none'}
+                                strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 opacity={0.88}
@@ -4156,87 +4340,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         );
                       }
 
-                      // Freehand chalk/pen/scissors stroke
-                      const pathStr = renderPointsToPath(
-                        el.points.map((pt) => ({
-                          x: pt.x - layer.offsetX,
-                          y: pt.y - layer.offsetY,
-                        }))
-                      );
-
-                      return (
-                        <g key={el.id}>
-                          {/* Selected Halo */}
-                          {isSelected && (
-                            <path
-                              d={pathStr}
-                              fill="none"
-                              stroke="#f59e0b"
-                              strokeWidth={Math.max(6, el.size + 4)}
-                              strokeOpacity={0.6}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          )}
-                          {/* Original Stroke on Sheet */}
-                          <path
-                            d={pathStr}
-                            fill="none"
-                            stroke={isSelected ? '#fbbf24' : el.color}
-                            strokeWidth={el.size}
-                            strokeOpacity={el.opacity}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
-                            cursor={isSheetLayer ? 'pointer' : 'default'}
-                            onClick={(e) => {
-                              if (isSheetLayer) {
-                                e.stopPropagation();
-                                setSelectedElementId(el.id);
-                                setActiveLayerId(layer.id);
-                              }
-                            }}
-                          />
-
-                          {/* Global Workspace Symmetry Stroke (if enabled on stroke creation) */}
-                          {el.symmetry && (
-                            <path
-                              d={renderPointsToPath(
-                                el.points.map((pt) => ({
-                                  x: el.symmetryAxisX * 2 - pt.x - layer.offsetX,
-                                  y: pt.y - layer.offsetY,
-                                }))
-                              )}
-                              fill="none"
-                              stroke={el.color}
-                              strokeWidth={el.size}
-                              strokeOpacity={el.opacity}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
-                            />
-                          )}
-
-                          {/* Cutting Sheet Mirrored Flipped Reflection across sheet center fold */}
-                          {isSheetMirrored && sheetFoldX != null && (
-                            <path
-                              d={renderPointsToPath(
-                                el.points.map((pt) => ({
-                                  x: 2 * sheetFoldX - pt.x - layer.offsetX,
-                                  y: pt.y - layer.offsetY,
-                                }))
-                              )}
-                              fill="none"
-                              stroke={el.color}
-                              strokeWidth={el.size}
-                              strokeOpacity={el.opacity}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
-                            />
-                          )}
-                        </g>
-                      );
+                      return null;
                     })}
                   </g>
                 );
@@ -4652,6 +4756,24 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               strokeLinejoin="round"
               strokeDasharray={currentStroke.tool === 'scissors' ? '6 4' : 'none'}
             />
+            {/* Real-time Mirrored Stroke Reflection while drawing */}
+            {symmetryEnabled && typeof symmetryAxisX === 'number' && currentStroke.points?.length > 0 && (
+              <path
+                d={renderPointsToPath(
+                  currentStroke.points.map((pt) => ({
+                    x: 2 * symmetryAxisX - pt.x,
+                    y: pt.y,
+                  }))
+                )}
+                fill="none"
+                stroke={currentStroke.color || '#38bdf8'}
+                strokeWidth={currentStroke.size || 2}
+                strokeOpacity={0.85}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeDasharray={currentStroke.tool === 'scissors' ? '6 4' : 'none'}
+              />
+            )}
           </svg>
         )}
 
@@ -4879,18 +5001,16 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           </div>
                         )}
 
-                        {/* Mirror Symmetry Toggle */}
+                        {/* Import Sheet to Cutting Table */}
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-300">Book-Fold Mirror:</span>
+                          <span className="text-slate-300">Cutting Table:</span>
                           <button
-                            onClick={() => handleUpdateCuttingSheet(sheet.id, { isMirrored: !sheet.isMirrored })}
-                            className={`px-2.5 py-1 rounded-lg font-bold text-[11px] border transition-all ${
-                              sheet.isMirrored
-                                ? 'bg-amber-500/20 text-amber-300 border-amber-400 shadow-gold-sm'
-                                : 'bg-slate-800 text-slate-400 border-slate-700'
-                            }`}
+                            onClick={() => handleImportSheetToCuttingTable(sheet.id)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 shadow transition-transform active:scale-95"
+                            title="Import this cutting sheet onto the Cutting Table rack"
                           >
-                            {sheet.isMirrored ? 'MIRROR: ON' : 'MIRROR: OFF'}
+                            <span>Import to Table</span>
+                            <ArrowRight className="w-3 h-3" />
                           </button>
                         </div>
 
@@ -5151,7 +5271,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           )}
         </div>
       </div>
-    )}
 
       {/* ========================================================================= */}
       {/* 3. EXPORT MODAL                                                           */}

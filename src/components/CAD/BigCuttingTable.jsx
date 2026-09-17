@@ -105,6 +105,8 @@ export const FLAT_FABRIC_PRESETS = [
 const BigCuttingTable = forwardRef(function BigCuttingTable({
   layers = [],
   cuttingSheets = [],
+  isFabricMoveEnabled = false,
+  onToggleFabricMove,
   onUpdateCuttingSheet,
   onRemoveCuttingSheet,
   onNavigateToDrafting,
@@ -131,20 +133,35 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const [activeTool, setActiveTool] = useState('scissors');
   const [isDrawingMode, setIsDrawingMode] = useState(false);
 
+  // Synchronize external isFabricMoveEnabled toggle from parent workspace header
+  useEffect(() => {
+    if (isFabricMoveEnabled && activeTool !== 'move') {
+      setActiveTool('move');
+    } else if (!isFabricMoveEnabled && activeTool === 'move') {
+      setActiveTool('select');
+    }
+  }, [isFabricMoveEnabled]);
+
   // Requirement 4: Tool Unselect Toggle Logic
   const handleToolSelect = useCallback((toolName) => {
     if (activeTool === toolName) {
       setActiveTool('select'); // Default back to selection
       setIsDrawingMode(false);
       setIsEyedropperActive(false);
+      if (toolName === 'move' && onToggleFabricMove) {
+        onToggleFabricMove(false);
+      }
     } else {
       setActiveTool(toolName);
       setIsDrawingMode(toolName === 'pen');
       if (toolName !== 'scissors') {
         setIsEyedropperActive(false);
       }
+      if (toolName === 'move' && onToggleFabricMove) {
+        onToggleFabricMove(true);
+      }
     }
-  }, [activeTool]);
+  }, [activeTool, onToggleFabricMove]);
 
   // Tap-and-hold state for moving imported bodice parts around freely
   const [tapHoldPatternId, setTapHoldPatternId] = useState(null);
@@ -195,23 +212,60 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   // -------------------------------------------------------------------------
   // 3. Flat Fabric on the Big Table
   // -------------------------------------------------------------------------
-  const [fabricConfig, setFabricConfig] = useState(() => ({
-    id: 'fabric_bolt_1',
-    name: '14.5oz Raw Selvedge Denim',
-    presetId: 'selvedge_denim',
-    customImageUrl: null,
-    x: 320,
-    y: 190,
-    widthInches: 54, // 54 inches wide
-    lengthInches: 90, // 2.5 yards (90 inches) long
-    scalePxPerInch: 14, // 1 inch = 14px on table
-    grainLabel: 'Warp Twill Grain (Selvedge to Selvedge)',
-    visible: true,
-  }));
+  const [fabricConfig, setFabricConfig] = useState(() => {
+    const base = {
+      id: 'fabric_bolt_1',
+      name: '14.5oz Raw Selvedge Denim',
+      presetId: 'selvedge_denim',
+      customImageUrl: null,
+      x: 320,
+      y: 190,
+      widthInches: 54, // 54 inches wide
+      lengthInches: 90, // 2.5 yards (90 inches) long
+      scalePxPerInch: 14, // 1 inch = 14px on table
+      grainLabel: 'Warp Twill Grain (Selvedge to Selvedge)',
+      visible: false, // Default to FALSE so initial table is a clean green cutting rack
+      rotation: 0,
+      locked: false,
+    };
+    try {
+      const saved = sessionStorage.getItem('tailorix_session_fabric_config');
+      if (saved) return { ...base, ...JSON.parse(saved) };
+    } catch {}
+    return base;
+  });
+
+  const [selectedFabric, setSelectedFabric] = useState(false);
+
+  // Imported sheets on the cutting table (clean initial state: empty)
+  const [importedSheetIds, setImportedSheetIds] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('tailorix_session_imported_sheet_ids');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tailorix_session_imported_sheet_ids', JSON.stringify(importedSheetIds));
+    } catch {}
+  }, [importedSheetIds]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tailorix_session_fabric_config', JSON.stringify(fabricConfig));
+    } catch {}
+  }, [fabricConfig]);
 
   const [isDraggingFabric, setIsDraggingFabric] = useState(false);
   const fabricDragStartRef = useRef({ x: 0, y: 0, startX: 0, startY: 0 });
   const fileInputRef = useRef(null);
+
+  // Unified Object Transformation (Move & Rotate) State
+  const [activeTransform, setActiveTransform] = useState(null);
+  const activeTransformRef = useRef(null);
+  activeTransformRef.current = activeTransform;
 
   // -------------------------------------------------------------------------
   // 4. Imported Traced Patterns & Bodice Layers
@@ -271,6 +325,16 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const [selectedCuttingSheetId, setSelectedCuttingSheetId] = useState(null);
   const [draggingSheetId, setDraggingSheetId] = useState(null);
   const sheetDragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
+  const [rotatingSheetId, setRotatingSheetId] = useState(null);
+  const sheetRotateRef = useRef({ centerX: 0, centerY: 0, startAngle: 0, initialRotation: 0 });
+
+  // Fabric rotation state
+  const [isRotatingFabric, setIsRotatingFabric] = useState(false);
+  const fabricRotateRef = useRef({ centerX: 0, centerY: 0, startAngle: 0, initialRotation: 0 });
+
+  // Traced pattern rotation state
+  const [rotatingPatternId, setRotatingPatternId] = useState(null);
+  const patternRotateRef = useRef({ centerX: 0, centerY: 0, startAngle: 0, initialRotation: 0 });
 
   // -------------------------------------------------------------------------
   // 9. UNDO / REDO HISTORY STACK
@@ -279,49 +343,44 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
 
-  // Expose imperative controls to parent workspace header
-  useImperativeHandle(ref, () => ({
-    handleUndo: () => handleUndo(),
-    handleRedo: () => handleRedo(),
-    toggleLayers: () => setShowLayerSection((prev) => !prev),
-    canUndo: history.length > 0,
-    canRedo: redoStack.length > 0,
-    showLayerSection,
-  }), [history.length, redoStack.length, showLayerSection]);
-
-  // Sync undo/redo and layers availability with parent workspace
-  useEffect(() => {
-    onHistoryChange?.({
-      canUndo: history.length > 0,
-      canRedo: redoStack.length > 0,
-      showLayers: showLayerSection,
-    });
-  }, [history.length, redoStack.length, showLayerSection, onHistoryChange]);
+  // Keep fresh refs to prevent stale closures in undo/redo and imperative handlers
+  const historyRef = useRef(history);
+  historyRef.current = history;
+  const redoStackRef = useRef(redoStack);
+  redoStackRef.current = redoStack;
+  const fabricConfigRef = useRef(fabricConfig);
+  fabricConfigRef.current = fabricConfig;
+  const tracedPatternsRef = useRef(tracedPatterns);
+  tracedPatternsRef.current = tracedPatterns;
+  const cutOutPiecesRef = useRef(cutOutPieces);
+  cutOutPiecesRef.current = cutOutPieces;
+  const handwritingStrokesRef = useRef(handwritingStrokes);
+  handwritingStrokesRef.current = handwritingStrokes;
 
   // Helper to record history before mutating state
   const pushState = useCallback((actionDesc = 'Action') => {
     setHistory((prev) => {
       const snapshot = {
         actionDesc,
-        fabricConfig: JSON.parse(JSON.stringify(fabricConfig)),
-        tracedPatterns: JSON.parse(JSON.stringify(tracedPatterns)),
-        cutOutPieces: JSON.parse(JSON.stringify(cutOutPieces)),
-        handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokes)),
+        fabricConfig: JSON.parse(JSON.stringify(fabricConfigRef.current)),
+        tracedPatterns: JSON.parse(JSON.stringify(tracedPatternsRef.current)),
+        cutOutPieces: JSON.parse(JSON.stringify(cutOutPiecesRef.current)),
+        handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokesRef.current)),
       };
       return [...prev.slice(-35), snapshot];
     });
     setRedoStack([]);
-  }, [fabricConfig, tracedPatterns, cutOutPieces, handwritingStrokes]);
+  }, []);
 
   const handleUndo = useCallback(() => {
-    if (history.length === 0) return;
-    const previousSnapshot = history[history.length - 1];
+    if (historyRef.current.length === 0) return;
+    const previousSnapshot = historyRef.current[historyRef.current.length - 1];
     const currentSnapshot = {
       actionDesc: 'Current State',
-      fabricConfig: JSON.parse(JSON.stringify(fabricConfig)),
-      tracedPatterns: JSON.parse(JSON.stringify(tracedPatterns)),
-      cutOutPieces: JSON.parse(JSON.stringify(cutOutPieces)),
-      handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokes)),
+      fabricConfig: JSON.parse(JSON.stringify(fabricConfigRef.current)),
+      tracedPatterns: JSON.parse(JSON.stringify(tracedPatternsRef.current)),
+      cutOutPieces: JSON.parse(JSON.stringify(cutOutPiecesRef.current)),
+      handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokesRef.current)),
     };
 
     setRedoStack((prev) => [...prev, currentSnapshot]);
@@ -337,17 +396,17 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       timestamp: Date.now(),
     });
     setTimeout(() => setCuttingToast(null), 2500);
-  }, [history, fabricConfig, tracedPatterns, cutOutPieces, handwritingStrokes]);
+  }, []);
 
   const handleRedo = useCallback(() => {
-    if (redoStack.length === 0) return;
-    const nextSnapshot = redoStack[redoStack.length - 1];
+    if (redoStackRef.current.length === 0) return;
+    const nextSnapshot = redoStackRef.current[redoStackRef.current.length - 1];
     const currentSnapshot = {
       actionDesc: 'Current State',
-      fabricConfig: JSON.parse(JSON.stringify(fabricConfig)),
-      tracedPatterns: JSON.parse(JSON.stringify(tracedPatterns)),
-      cutOutPieces: JSON.parse(JSON.stringify(cutOutPieces)),
-      handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokes)),
+      fabricConfig: JSON.parse(JSON.stringify(fabricConfigRef.current)),
+      tracedPatterns: JSON.parse(JSON.stringify(tracedPatternsRef.current)),
+      cutOutPieces: JSON.parse(JSON.stringify(cutOutPiecesRef.current)),
+      handwritingStrokes: JSON.parse(JSON.stringify(handwritingStrokesRef.current)),
     };
 
     setHistory((prev) => [...prev, currentSnapshot]);
@@ -363,7 +422,113 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       timestamp: Date.now(),
     });
     setTimeout(() => setCuttingToast(null), 2500);
-  }, [redoStack, fabricConfig, tracedPatterns, cutOutPieces, handwritingStrokes]);
+  }, []);
+
+  // Toggle move mode (Requirement: movement of fabric only happens when Move toggle button is turned on at the header)
+  const toggleMoveMode = useCallback(() => {
+    setActiveTool((curr) => {
+      const next = curr === 'move' ? 'select' : 'move';
+      onToggleFabricMove?.(next === 'move');
+      setCuttingToast({
+        message: next === 'move'
+          ? 'Move Fabric mode ON: Drag fabric freely across the table'
+          : 'Move Fabric mode OFF: Fabric is strictly stationary',
+        timestamp: Date.now(),
+      });
+      setTimeout(() => setCuttingToast(null), 2500);
+      return next;
+    });
+  }, [onToggleFabricMove]);
+
+  // Toggle fabric visibility (Requirement: green rack represents the table where users can cut sheets on, fabric can be hidden)
+  const toggleFabricVisibility = useCallback(() => {
+    pushState('Toggle Fabric Visibility');
+    setFabricConfig((prev) => {
+      const nextVis = !prev.visible;
+      setCuttingToast({
+        message: nextVis
+          ? 'Fabric overlayer visible'
+          : 'Fabric hidden: Green rack table active to cut sheets directly',
+        timestamp: Date.now(),
+      });
+      setTimeout(() => setCuttingToast(null), 2500);
+      return { ...prev, visible: nextVis };
+    });
+  }, [pushState]);
+
+  // Import / Remove Cutting Sheets onto Cutting Table Rack
+  const handleImportSheetToTable = useCallback((sheetId) => {
+    if (!sheetId) return;
+    const sheet = cuttingSheets.find((s) => s.id === sheetId);
+    if (!sheet) return;
+
+    setImportedSheetIds((prev) => {
+      if (prev.includes(sheetId)) return prev;
+      return [...prev, sheetId];
+    });
+    setSelectedCuttingSheetId(sheetId);
+    setSelectedFabric(false);
+    setSelectedPatternId(null);
+    setCuttingToast({
+      message: `✓ Imported "${sheet.name}" onto cutting table rack`,
+      timestamp: Date.now(),
+    });
+    setTimeout(() => setCuttingToast(null), 2500);
+  }, [cuttingSheets]);
+
+  const handleRemoveSheetFromTable = useCallback((sheetId) => {
+    setImportedSheetIds((prev) => prev.filter((id) => id !== sheetId));
+    if (selectedCuttingSheetId === sheetId) {
+      setSelectedCuttingSheetId(null);
+    }
+  }, [selectedCuttingSheetId]);
+
+  // Expose imperative controls to parent workspace header
+  useImperativeHandle(ref, () => ({
+    handleUndo,
+    handleRedo,
+    toggleLayers: () => setShowLayerSection((prev) => !prev),
+    toggleMoveMode,
+    toggleFabricVisibility,
+    importSheet: (sheetId) => handleImportSheetToTable(sheetId),
+    importLayer: (layer) => handleTraceBodiceOntoFabric(layer),
+    canUndo: history.length > 0,
+    canRedo: redoStack.length > 0,
+    showLayerSection,
+    isMoveEnabled: activeTool === 'move' || isFabricMoveEnabled,
+    isFabricVisible: fabricConfig.visible,
+  }), [
+    handleUndo,
+    handleRedo,
+    toggleMoveMode,
+    toggleFabricVisibility,
+    handleImportSheetToTable,
+    history.length,
+    redoStack.length,
+    showLayerSection,
+    activeTool,
+    isFabricMoveEnabled,
+    fabricConfig.visible,
+  ]);
+
+  // Sync undo/redo, move toggle, and layers availability with parent workspace
+  useEffect(() => {
+    onHistoryChange?.({
+      canUndo: history.length > 0,
+      canRedo: redoStack.length > 0,
+      showLayers: showLayerSection,
+      isMoveEnabled: activeTool === 'move' || isFabricMoveEnabled,
+      isFabricVisible: fabricConfig.visible,
+    });
+  }, [
+    history.length,
+    redoStack.length,
+    showLayerSection,
+    activeTool,
+    isFabricMoveEnabled,
+    fabricConfig.visible,
+    onHistoryChange,
+  ]);
 
   // Cutting Sheet Excision on Green Rack
   const handleCutSheet = useCallback((sheet) => {
@@ -397,9 +562,10 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
   // Requirement: Movement of fabric only happens when Move toggle button is turned on in the header
   const shiftFabricOnTable = useCallback((direction, stepDistance = 20) => {
-    if (activeTool !== 'move') {
+    const isMoveActive = activeTool === 'move' || isFabricMoveEnabled;
+    if (!isMoveActive) {
       setCuttingToast({
-        message: 'Fabric is stationary. Turn on the "Move" toggle in the header to allow moving fabric.',
+        message: 'Fabric is stationary. Turn on the "Move Fabric" toggle in the header to allow moving fabric.',
         timestamp: Date.now(),
       });
       setTimeout(() => setCuttingToast(null), 2500);
@@ -432,7 +598,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       timestamp: Date.now(),
     });
     setTimeout(() => setCuttingToast(null), 2000);
-  }, [activeTool, pushState, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_WIDTH, TABLE_HEIGHT]);
+  }, [activeTool, isFabricMoveEnabled, pushState, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_WIDTH, TABLE_HEIGHT]);
 
   // Keyboard shortcut listener (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z)
   useEffect(() => {
@@ -1270,11 +1436,20 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   };
 
   // Start dragging the fabric bolt anywhere within the stationary table
-  // (Strict rule: Fabric only moves when Move toggle is ON in the header)
+  // (Strict rule: Fabric only moves when Move toggle is ON in the header and fabric is unlocked)
   const handleStartDragFabric = useCallback((clientX, clientY) => {
-    if (activeTool !== 'move') {
+    const isMoveActive = activeTool === 'move' || isFabricMoveEnabled;
+    if (!isMoveActive) {
       setCuttingToast({
-        message: 'Fabric is stationary. Turn on the "Move" toggle in the header to allow moving fabric.',
+        message: 'Fabric is stationary. Turn on the "Move Objects" toggle in the header to allow moving fabric.',
+        timestamp: Date.now(),
+      });
+      setTimeout(() => setCuttingToast(null), 2500);
+      return;
+    }
+    if (fabricConfig.locked) {
+      setCuttingToast({
+        message: 'Fabric is locked. Unlock it in the inspector to move or rotate.',
         timestamp: Date.now(),
       });
       setTimeout(() => setCuttingToast(null), 2500);
@@ -1287,15 +1462,90 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       startX: fabricConfig.x,
       startY: fabricConfig.y,
     };
-  }, [activeTool, fabricConfig.x, fabricConfig.y]);
+  }, [activeTool, isFabricMoveEnabled, fabricConfig.x, fabricConfig.y, fabricConfig.locked]);
 
-  // Dragging Cutting Sheets on Green Rack (Only allowed when activeTool === 'move')
+  // Free Rotation handler for Fabric
+  const handleStartRotateFabric = useCallback((e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (fabricConfig.locked) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const fabricEl = document.getElementById('cutting-table-fabric-bolt');
+    if (!fabricEl) return;
+    const rect = fabricEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const startAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+    fabricRotateRef.current = {
+      centerX,
+      centerY,
+      startAngle,
+      initialRotation: fabricConfig.rotation || 0,
+    };
+    setIsRotatingFabric(true);
+  }, [fabricConfig.locked, fabricConfig.rotation]);
+
+  // Free Rotation handler for Cutting Sheet
+  const handleStartRotateSheet = useCallback((e, sheet) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (sheet.locked) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const sheetEl = document.getElementById(`cutting-table-sheet-${sheet.id}`);
+    if (!sheetEl) return;
+    const rect = sheetEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const startAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+    sheetRotateRef.current = {
+      centerX,
+      centerY,
+      startAngle,
+      initialRotation: sheet.rotation || 0,
+    };
+    setRotatingSheetId(sheet.id);
+  }, []);
+
+  // Free Rotation handler for Pattern
+  const handleStartRotatePattern = useCallback((e, pat) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (pat.locked) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    if (!tableBenchRef.current) return;
+    const benchRect = tableBenchRef.current.getBoundingClientRect();
+    const effW = pat.isUnfolded ? pat.width * 2 : pat.width;
+    const centerX = benchRect.left + (pat.x + effW / 2) * tableZoom;
+    const centerY = benchRect.top + (pat.y + pat.height / 2) * tableZoom;
+
+    const startAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+    patternRotateRef.current = {
+      centerX,
+      centerY,
+      startAngle,
+      initialRotation: pat.rotation || 0,
+    };
+    setRotatingPatternId(pat.id);
+  }, [tableZoom]);
+
+  // Dragging Cutting Sheets on Green Rack (Allowed when Move mode is active)
   useEffect(() => {
     if (!draggingSheetId) return;
 
     const handleWindowSheetMove = (e) => {
-      const dx = (e.clientX - sheetDragRef.current.startX) / tableZoom;
-      const dy = (e.clientY - sheetDragRef.current.startY) / tableZoom;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+      const dx = (clientX - sheetDragRef.current.startX) / tableZoom;
+      const dy = (clientY - sheetDragRef.current.startY) / tableZoom;
 
       const nextX = Math.max(
         TABLE_PADDING_X,
@@ -1316,12 +1566,166 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
     window.addEventListener('mousemove', handleWindowSheetMove);
     window.addEventListener('mouseup', handleWindowSheetUp);
+    window.addEventListener('touchmove', handleWindowSheetMove, { passive: false });
+    window.addEventListener('touchend', handleWindowSheetUp);
 
     return () => {
       window.removeEventListener('mousemove', handleWindowSheetMove);
       window.removeEventListener('mouseup', handleWindowSheetUp);
+      window.removeEventListener('touchmove', handleWindowSheetMove);
+      window.removeEventListener('touchend', handleWindowSheetUp);
     };
   }, [draggingSheetId, tableZoom, onUpdateCuttingSheet, pushState, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_WIDTH, TABLE_HEIGHT]);
+
+  // Continuous Free Rotation of Cutting Sheet
+  useEffect(() => {
+    if (!rotatingSheetId) return;
+
+    const handleWindowRotateMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const { centerX, centerY, startAngle, initialRotation } = sheetRotateRef.current;
+      const currentAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+      const delta = currentAngle - startAngle;
+      let newRotation = Math.round((initialRotation + delta) % 360);
+      if (newRotation < 0) newRotation += 360;
+
+      onUpdateCuttingSheet?.(rotatingSheetId, { rotation: newRotation });
+    };
+
+    const handleWindowRotateUp = () => {
+      setRotatingSheetId(null);
+      pushState('Rotate Cutting Sheet');
+    };
+
+    window.addEventListener('mousemove', handleWindowRotateMove);
+    window.addEventListener('mouseup', handleWindowRotateUp);
+    window.addEventListener('touchmove', handleWindowRotateMove, { passive: false });
+    window.addEventListener('touchend', handleWindowRotateUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowRotateMove);
+      window.removeEventListener('mouseup', handleWindowRotateUp);
+      window.removeEventListener('touchmove', handleWindowRotateMove);
+      window.removeEventListener('touchend', handleWindowRotateUp);
+    };
+  }, [rotatingSheetId, onUpdateCuttingSheet, pushState]);
+
+  // Continuous Free Rotation of Fabric Bolt
+  useEffect(() => {
+    if (!isRotatingFabric) return;
+
+    const handleFabricRotateMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const { centerX, centerY, startAngle, initialRotation } = fabricRotateRef.current;
+      const currentAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+      const delta = currentAngle - startAngle;
+      let newRotation = Math.round((initialRotation + delta) % 360);
+      if (newRotation < 0) newRotation += 360;
+
+      setFabricConfig((prev) => ({ ...prev, rotation: newRotation }));
+    };
+
+    const handleFabricRotateUp = () => {
+      setIsRotatingFabric(false);
+      pushState('Rotate Fabric');
+    };
+
+    window.addEventListener('mousemove', handleFabricRotateMove);
+    window.addEventListener('mouseup', handleFabricRotateUp);
+    window.addEventListener('touchmove', handleFabricRotateMove, { passive: false });
+    window.addEventListener('touchend', handleFabricRotateUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleFabricRotateMove);
+      window.removeEventListener('mouseup', handleFabricRotateUp);
+      window.removeEventListener('touchmove', handleFabricRotateMove);
+      window.removeEventListener('touchend', handleFabricRotateUp);
+    };
+  }, [isRotatingFabric, pushState]);
+
+  // Continuous Free Rotation of Traced Pattern
+  useEffect(() => {
+    if (!rotatingPatternId) return;
+
+    const handlePatternRotateMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const { centerX, centerY, startAngle, initialRotation } = patternRotateRef.current;
+      const currentAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
+      const delta = currentAngle - startAngle;
+      let newRotation = Math.round((initialRotation + delta) % 360);
+      if (newRotation < 0) newRotation += 360;
+
+      setTracedPatterns((prev) =>
+        prev.map((p) => (p.id === rotatingPatternId ? { ...p, rotation: newRotation } : p))
+      );
+    };
+
+    const handlePatternRotateUp = () => {
+      setRotatingPatternId(null);
+      pushState('Rotate Pattern');
+    };
+
+    window.addEventListener('mousemove', handlePatternRotateMove);
+    window.addEventListener('mouseup', handlePatternRotateUp);
+    window.addEventListener('touchmove', handlePatternRotateMove, { passive: false });
+    window.addEventListener('touchend', handlePatternRotateUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handlePatternRotateMove);
+      window.removeEventListener('mouseup', handlePatternRotateUp);
+      window.removeEventListener('touchmove', handlePatternRotateMove);
+      window.removeEventListener('touchend', handlePatternRotateUp);
+    };
+  }, [rotatingPatternId, pushState]);
+
+  // Dragging Pattern Layer (Unified Window Listener)
+  useEffect(() => {
+    if (!isDraggingPattern || !selectedPatternId) return;
+
+    const handleWindowPatternMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+      const dx = (clientX - patternDragRef.current.x) / tableZoom;
+      const dy = (clientY - patternDragRef.current.y) / tableZoom;
+
+      setTracedPatterns((prev) =>
+        prev.map((p) => {
+          if (p.id !== selectedPatternId || p.locked) return p;
+          const effW = p.isUnfolded ? p.width * 2 : p.width;
+          const minX = TABLE_PADDING_X;
+          const maxX = TABLE_WIDTH - TABLE_PADDING_X - effW;
+          const minY = TABLE_PADDING_Y_TOP;
+          const maxY = TABLE_HEIGHT - TABLE_PADDING_Y_BOTTOM - p.height;
+
+          const clampedX = Math.max(minX, Math.min(maxX, Math.round(patternDragRef.current.initialX + dx)));
+          const clampedY = Math.max(minY, Math.min(maxY, Math.round(patternDragRef.current.initialY + dy)));
+
+          return { ...p, x: clampedX, y: clampedY };
+        })
+      );
+    };
+
+    const handleWindowPatternUp = () => {
+      setIsDraggingPattern(false);
+      pushState('Move Pattern');
+    };
+
+    window.addEventListener('mousemove', handleWindowPatternMove);
+    window.addEventListener('mouseup', handleWindowPatternUp);
+    window.addEventListener('touchmove', handleWindowPatternMove, { passive: false });
+    window.addEventListener('touchend', handleWindowPatternUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowPatternMove);
+      window.removeEventListener('mouseup', handleWindowPatternUp);
+      window.removeEventListener('touchmove', handleWindowPatternMove);
+      window.removeEventListener('touchend', handleWindowPatternUp);
+    };
+  }, [isDraggingPattern, selectedPatternId, tableZoom, pushState, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_WIDTH, TABLE_HEIGHT]);
 
   useEffect(() => {
     if (!isDraggingFabric) return;
@@ -1350,6 +1754,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
     const handleWindowMouseUp = () => {
       setIsDraggingFabric(false);
+      pushState('Move Fabric');
     };
 
     const handleWindowTouchMove = (e) => {
@@ -1360,6 +1765,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
     const handleWindowTouchEnd = () => {
       setIsDraggingFabric(false);
+      pushState('Move Fabric');
     };
 
     window.addEventListener('mousemove', handleWindowMouseMove);
@@ -2259,106 +2665,171 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
               </div>
             )}
 
-            {/* 2. Paper Cutting Sheets on the Green Rack */}
-            {cuttingSheets.map((sheet) => {
-              const isSelected = selectedCuttingSheetId === sheet.id;
-              const effW = sheet.isMirrored ? sheet.width * 2 : sheet.width;
+            {/* 2. Paper Cutting Sheets on the Green Rack (Only imported sheets are shown) */}
+            {cuttingSheets
+              .filter((sheet) => (importedSheetIds || []).includes(sheet.id))
+              .map((sheet) => {
+                const isSelected = selectedCuttingSheetId === sheet.id;
+                const effW = sheet.isMirrored ? sheet.width * 2 : sheet.width;
+                const sheetLayer = layers.find(
+                  (l) => l.sheetId === sheet.id || l.id === sheet.layerId || l.id === `layer_sheet_${sheet.id}`
+                );
 
-              return (
-                <div
-                  key={sheet.id}
-                  id={`cutting-table-sheet-${sheet.id}`}
-                  className={`absolute rounded-xl border-2 transition-shadow select-none ${
-                    isSelected
-                      ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-2xl z-20'
-                      : 'border-slate-400/80 shadow-lg z-10'
-                  } ${activeTool === 'move' ? 'cursor-move' : activeTool === 'scissors' ? 'cursor-pointer' : 'cursor-default'}`}
-                  style={{
-                    left: `${sheet.x ?? 80}px`,
-                    top: `${sheet.y ?? 120}px`,
-                    width: `${effW}px`,
-                    height: `${sheet.height}px`,
-                    backgroundColor: sheet.color || '#ffffff',
-                    opacity: sheet.opacity || 0.95,
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedCuttingSheetId(sheet.id);
-                    if (activeTool === 'scissors') {
-                      handleCutSheet(sheet);
-                    }
-                  }}
-                  onMouseDown={(e) => {
-                    if (activeTool === 'move') {
+                return (
+                  <div
+                    key={sheet.id}
+                    id={`cutting-table-sheet-${sheet.id}`}
+                    className={`absolute rounded-xl border-2 transition-shadow select-none ${
+                      isSelected
+                        ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-2xl z-20'
+                        : 'border-slate-400/80 shadow-lg z-10'
+                    } ${activeTool === 'move' ? 'cursor-move' : activeTool === 'scissors' ? 'cursor-pointer' : 'cursor-default'}`}
+                    style={{
+                      left: `${sheet.x ?? 80}px`,
+                      top: `${sheet.y ?? 120}px`,
+                      width: `${effW}px`,
+                      height: `${sheet.height}px`,
+                      backgroundColor: sheet.color || '#ffffff',
+                      opacity: sheet.opacity || 0.95,
+                      transform: `rotate(${sheet.rotation || 0}deg)`,
+                      transformOrigin: 'center center',
+                    }}
+                    onClick={(e) => {
                       e.stopPropagation();
                       setSelectedCuttingSheetId(sheet.id);
-                      setDraggingSheetId(sheet.id);
-                      sheetDragRef.current = {
-                        startX: e.clientX,
-                        startY: e.clientY,
-                        initialX: sheet.x ?? 80,
-                        initialY: sheet.y ?? 120,
-                      };
-                    }
-                  }}
-                >
-                  {/* Grid Pattern on the sheet */}
-                  <div
-                    className="w-full h-full rounded-xl pointer-events-none relative overflow-hidden"
-                    style={{
-                      backgroundImage: `
-                        linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
-                        linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px)
-                      `,
-                      backgroundSize: '24px 24px',
+                      if (activeTool === 'scissors') {
+                        handleCutSheet(sheet);
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      if (activeTool === 'move' || isFabricMoveEnabled) {
+                        if (sheet.locked) return;
+                        e.stopPropagation();
+                        setSelectedCuttingSheetId(sheet.id);
+                        setDraggingSheetId(sheet.id);
+                        sheetDragRef.current = {
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          initialX: sheet.x ?? 80,
+                          initialY: sheet.y ?? 120,
+                        };
+                      }
+                    }}
+                    onTouchStart={(e) => {
+                      if (activeTool === 'move' || isFabricMoveEnabled) {
+                        if (sheet.locked) return;
+                        if (e.touches && e.touches[0]) {
+                          e.stopPropagation();
+                          setSelectedCuttingSheetId(sheet.id);
+                          setDraggingSheetId(sheet.id);
+                          sheetDragRef.current = {
+                            startX: e.touches[0].clientX,
+                            startY: e.touches[0].clientY,
+                            initialX: sheet.x ?? 80,
+                            initialY: sheet.y ?? 120,
+                          };
+                        }
+                      }
                     }}
                   >
-                    {/* Sheet Header Banner */}
-                    <div className="p-2 bg-slate-900/85 backdrop-blur-sm border-b border-slate-700/60 text-slate-100 flex items-center justify-between pointer-events-auto">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-bold text-amber-300 truncate max-w-[140px]">{sheet.name}</span>
-                        <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/60 px-1 rounded">
-                          Green Rack Sheet
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCutSheet(sheet);
-                          }}
-                          className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 shadow-sm transition-transform active:scale-95"
-                          title="Cut sheet on green rack and save to Project Gallery"
-                        >
-                          <Scissors className="w-3 h-3" />
-                          <span>Cut Sheet</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Center fold line if sheet is mirrored */}
-                    {sheet.isMirrored && (
-                      <div className="absolute top-9 bottom-0 left-1/2 w-0 border-l border-dashed border-sky-600/80 pointer-events-none flex items-center justify-center">
-                        <span className="bg-sky-900/90 text-sky-200 text-[8px] font-mono font-bold px-1 rounded -rotate-90">
-                          FOLD LINE
-                        </span>
+                    {/* Rotation Handle for Cutting Sheet (When Move Tool Active) */}
+                    {isSelected && (activeTool === 'move' || isFabricMoveEnabled) && !sheet.locked && (
+                      <div
+                        className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center cursor-grab active:cursor-grabbing z-30 pointer-events-auto"
+                        onMouseDown={(e) => handleStartRotateSheet(e, sheet)}
+                        onTouchStart={(e) => handleStartRotateSheet(e, sheet)}
+                        title="Drag to rotate cutting sheet"
+                      >
+                        <div className="w-5 h-5 rounded-full bg-sky-500 hover:bg-sky-400 text-slate-950 flex items-center justify-center shadow-md border-2 border-white">
+                          <RotateCw className="w-3 h-3 text-slate-950 font-bold" />
+                        </div>
+                        <div className="w-0.5 h-2 bg-sky-400" />
                       </div>
                     )}
 
-                    {/* Dimensions watermark */}
-                    <div className="absolute bottom-2 left-3 pointer-events-none select-none text-[10px] font-mono font-bold text-slate-700/80">
-                      {sheet.width}" × {sheet.height}" {sheet.isMirrored ? '(Mirrored Full View)' : ''}
+                    {/* Grid Pattern on the sheet */}
+                    <div
+                      className="w-full h-full rounded-xl pointer-events-none relative overflow-hidden"
+                      style={{
+                        backgroundImage: `
+                          linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
+                          linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px)
+                        `,
+                        backgroundSize: '24px 24px',
+                      }}
+                    >
+                      {/* Sheet Header Banner */}
+                      <div className="p-2 bg-slate-900/85 backdrop-blur-sm border-b border-slate-700/60 text-slate-100 flex items-center justify-between pointer-events-auto">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-bold text-amber-300 truncate max-w-[140px]">{sheet.name}</span>
+                          <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/60 px-1 rounded">
+                            Green Rack Sheet
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCutSheet(sheet);
+                            }}
+                            className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 shadow-sm transition-transform active:scale-95"
+                            title="Cut sheet on green rack and save to Project Gallery"
+                          >
+                            <Scissors className="w-3 h-3" />
+                            <span>Cut Sheet</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Vector Strokes from matching Layer */}
+                      {sheetLayer && sheetLayer.elements && sheetLayer.elements.length > 0 && (
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+                          {sheetLayer.elements.map((el) => {
+                            if (!el.points || el.points.length === 0) return null;
+                            const relPts = el.points.map((pt) => ({
+                              x: pt.x - (sheet.x ?? 80),
+                              y: pt.y - (sheet.y ?? 120),
+                            }));
+                            return (
+                              <path
+                                key={el.id}
+                                d={pointsToPath(relPts)}
+                                fill="none"
+                                stroke={el.color || '#38bdf8'}
+                                strokeWidth={el.size || 2}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
+                              />
+                            );
+                          })}
+                        </svg>
+                      )}
+
+                      {/* Center fold line if sheet is mirrored */}
+                      {sheet.isMirrored && (
+                        <div className="absolute top-9 bottom-0 left-1/2 w-0 border-l border-dashed border-sky-600/80 pointer-events-none flex items-center justify-center">
+                          <span className="bg-sky-900/90 text-sky-200 text-[8px] font-mono font-bold px-1 rounded -rotate-90">
+                            FOLD LINE
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Dimensions watermark */}
+                      <div className="absolute bottom-2 left-3 pointer-events-none select-none text-[10px] font-mono font-bold text-slate-700/80">
+                        {sheet.width}" × {sheet.height}" {sheet.isMirrored ? '(Mirrored Full View)' : ''}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
 
             {/* Visible Flat Fabric Bolt (Expandable & Freely Shiftable on Table) */}
             {fabricConfig.visible && (
               <div
-                className={`absolute rounded-lg border-2 border-dashed border-amber-400/60 shadow-[0_15px_35px_rgba(0,0,0,0.65)] transition-all duration-75 group ${
-                  activeTool === 'move' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+                id="cutting-table-fabric-bolt"
+                className={`absolute rounded-lg border-2 border-dashed border-amber-400/60 shadow-[0_15px_35px_rgba(0,0,0,0.65)] transition-shadow duration-75 group ${
+                  (activeTool === 'move' || isFabricMoveEnabled) ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
                 }`}
                 style={{
                   left: `${fabricConfig.x}px`,
@@ -2370,21 +2841,21 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                     ? `url(${fabricConfig.customImageUrl})`
                     : activePreset.textureCss,
                   backgroundSize: fabricConfig.customImageUrl ? 'cover' : 'auto',
+                  transform: `rotate(${fabricConfig.rotation || 0}deg)`,
+                  transformOrigin: 'center center',
                 }}
                 onMouseDown={(e) => {
-                  if (activeTool !== 'move') {
-                    // Fabric is stationary unless Move tool toggle is ON
+                  if (activeTool !== 'move' && !isFabricMoveEnabled) {
+                    // Fabric is stationary unless Move Fabric toggle is ON
                     return;
                   }
-                  if (e.target === e.currentTarget || e.target.classList.contains('fabric-handle') || e.target.closest('.fabric-handle')) {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    handleStartDragFabric(e.clientX, e.clientY);
-                  }
+                  e.stopPropagation();
+                  e.preventDefault();
+                  handleStartDragFabric(e.clientX, e.clientY);
                 }}
                 onTouchStart={(e) => {
-                  if (activeTool !== 'move') {
-                    // Fabric is stationary unless Move tool toggle is ON
+                  if (activeTool !== 'move' && !isFabricMoveEnabled) {
+                    // Fabric is stationary unless Move Fabric toggle is ON
                     return;
                   }
                   if (e.touches && e.touches[0]) {
@@ -2393,6 +2864,21 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   }
                 }}
               >
+                {/* Rotation Handle for Fabric Bolt (When Move Tool Active) */}
+                {(activeTool === 'move' || isFabricMoveEnabled) && !fabricConfig.locked && (
+                  <div
+                    className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center cursor-grab active:cursor-grabbing z-30 pointer-events-auto"
+                    onMouseDown={handleStartRotateFabric}
+                    onTouchStart={handleStartRotateFabric}
+                    title="Drag to rotate fabric bolt"
+                  >
+                    <div className="w-6 h-6 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-lg border-2 border-white">
+                      <RotateCw className="w-3.5 h-3.5 text-slate-950 font-bold" />
+                    </div>
+                    <div className="w-0.5 h-2 bg-amber-400" />
+                  </div>
+                )}
+
                 {/* Fabric Header & Grainline Watermark */}
                 <div className="absolute top-3 left-4 right-4 flex items-center justify-between pointer-events-none select-none">
                   <div className="bg-black/75 backdrop-blur-md px-3 py-1 rounded-lg border border-white/15 text-slate-100 flex items-center gap-2 text-xs">
@@ -2484,9 +2970,11 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   className={`fabric-handle absolute bottom-3 right-4 px-3.5 py-1.5 rounded-xl border ${
                     isDraggingFabric
                       ? 'bg-amber-500 text-slate-950 border-amber-400 ring-2 ring-amber-400 shadow-gold scale-105'
-                      : 'bg-slate-950/90 hover:bg-slate-900 border-amber-400/70 text-amber-400 hover:text-amber-300'
+                      : (activeTool === 'move' || isFabricMoveEnabled)
+                        ? 'bg-slate-950/90 hover:bg-slate-900 border-amber-400/70 text-amber-400 hover:text-amber-300'
+                        : 'bg-slate-950/70 hover:bg-slate-900/90 border-slate-700 text-slate-400 hover:text-slate-300'
                   } flex items-center gap-1.5 text-xs font-bold shadow-2xl cursor-grab active:cursor-grabbing pointer-events-auto transition-all select-none`}
-                  title="Click and hold to freely shift fabric anywhere within the cutting table"
+                  title={(activeTool === 'move' || isFabricMoveEnabled) ? "Click and hold to freely shift fabric anywhere within the cutting table" : "Fabric is stationary. Turn on Move Fabric in the header to enable movement"}
                 >
                   <Move className="w-3.5 h-3.5" />
                   <span>Shift Fabric on Table</span>
@@ -2564,7 +3052,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   return (
                     <g
                       key={pat.id}
-                      transform={`translate(${pat.x}, ${pat.y}) rotate(${pat.rotation})`}
+                      transform={`translate(${pat.x}, ${pat.y}) rotate(${pat.rotation || 0}, ${effW / 2}, ${pat.height / 2})`}
                       className="pointer-events-auto cursor-grab active:cursor-grabbing"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -2583,26 +3071,42 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                           initialY: pat.y,
                         };
 
-                        if (activeTool === 'move') {
-                          setIsDraggingPattern(true);
-                          setTapHoldPatternId(pat.id);
-                        } else {
-                          // Tap-and-hold (hold for 200ms to freely move imported bodice part)
-                          tapHoldTimerRef.current = setTimeout(() => {
+                        if (activeTool === 'move' || isFabricMoveEnabled) {
+                          if (!pat.locked) {
                             setIsDraggingPattern(true);
                             setTapHoldPatternId(pat.id);
-                          }, 200);
+                          }
                         }
                       }}
-                      onPointerUp={(e) => {
-                        if (tapHoldTimerRef.current) {
-                          clearTimeout(tapHoldTimerRef.current);
-                          tapHoldTimerRef.current = null;
-                        }
+                      onPointerUp={() => {
                         setIsDraggingPattern(false);
                         setTapHoldPatternId(null);
                       }}
                     >
+                      {/* Rotation Handle for Pattern (When Move Tool Active) */}
+                      {isSelected && (activeTool === 'move' || isFabricMoveEnabled) && !pat.locked && (
+                        <g className="cursor-grab active:cursor-grabbing pointer-events-auto">
+                          <line
+                            x1={effW / 2}
+                            y1={0}
+                            x2={effW / 2}
+                            y2={-20}
+                            stroke="#38bdf8"
+                            strokeWidth="1.5"
+                            strokeDasharray="2 2"
+                          />
+                          <circle
+                            cx={effW / 2}
+                            cy={-20}
+                            r={7}
+                            fill="#0284c7"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                            onPointerDown={(e) => handleStartRotatePattern(e, pat)}
+                            title="Drag to rotate pattern"
+                          />
+                        </g>
+                      )}
                       {/* Negative area if already cut out */}
                       {pat.isCutOut && (
                         <g>
@@ -2803,7 +3307,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   return (
                     <g
                       key={piece.id}
-                      transform={`translate(${piece.x}, ${piece.y}) rotate(${piece.rotation})`}
+                      transform={`translate(${piece.x}, ${piece.y}) rotate(${piece.rotation || 0}, ${piece.width / 2}, ${piece.height / 2})`}
                       className="pointer-events-auto cursor-move group"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -2812,13 +3316,16 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         setSelectedCutPieceId(piece.id);
-                        setIsDraggingCutPiece(true);
-                        cutPieceDragRef.current = {
-                          x: e.clientX,
-                          y: e.clientY,
-                          initialX: piece.x,
-                          initialY: piece.y,
-                        };
+                        if (activeTool === 'move' || isFabricMoveEnabled) {
+                          if (piece.locked) return;
+                          setIsDraggingCutPiece(true);
+                          cutPieceDragRef.current = {
+                            x: e.clientX,
+                            y: e.clientY,
+                            initialX: piece.x,
+                            initialY: piece.y,
+                          };
+                        }
                       }}
                     >
                       {/* Primary Cut Piece */}
@@ -3026,8 +3533,10 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   </div>
                 </div>
 
-                {/* 2. Paper Cutting Sheets on Green Rack */}
-                {cuttingSheets.map((sheet) => (
+                {/* 2. Paper Cutting Sheets on Green Rack (Only imported sheets) */}
+                {cuttingSheets
+                  .filter((sheet) => (importedSheetIds || []).includes(sheet.id))
+                  .map((sheet) => (
                   <div
                     key={sheet.id}
                     onClick={() => setSelectedCuttingSheetId(sheet.id)}
@@ -3067,6 +3576,18 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                         title="Move sheet on table"
                       >
                         <Move className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Remove from Table */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveSheetFromTable(sheet.id);
+                        }}
+                        className="px-2 py-1 bg-rose-950/70 hover:bg-rose-900 text-rose-300 font-bold rounded text-[10px] border border-rose-800"
+                        title="Remove sheet from table"
+                      >
+                        Remove
                       </button>
 
                       {/* Cut Sheet with Scissors */}
@@ -3326,6 +3847,44 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Drafted Cutting Sheets Available for Import onto Table */}
+              <div className="mt-3 pt-3 border-t border-slate-800">
+                <span className="text-[11px] font-bold text-slate-300 block mb-2">
+                  Drafted Cutting Sheets Available for Import:
+                </span>
+                {cuttingSheets.filter((s) => !(importedSheetIds || []).includes(s.id)).length === 0 ? (
+                  <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800 text-center text-xs text-slate-400 font-medium">
+                    {cuttingSheets.length === 0
+                      ? 'No cutting sheets drafted yet.'
+                      : 'All drafted cutting sheets are imported to table.'}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {cuttingSheets
+                      .filter((s) => !(importedSheetIds || []).includes(s.id))
+                      .map((sheet) => (
+                        <div
+                          key={sheet.id}
+                          className="w-full p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 text-slate-200 text-xs flex items-center justify-between"
+                        >
+                          <div className="truncate flex-1 pr-2">
+                            <span className="font-bold block truncate text-slate-100">{sheet.name}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {sheet.width}" × {sheet.height}" {sheet.isMirrored ? '(Mirrored)' : ''}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleImportSheetToTable(sheet.id)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow flex items-center gap-1"
+                          >
+                            <span>Import to Table</span>
+                          </button>
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>

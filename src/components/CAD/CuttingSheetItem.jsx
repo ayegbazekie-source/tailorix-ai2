@@ -4,7 +4,6 @@ import {
   Lock,
   Unlock,
   Copy,
-  FlipHorizontal,
   Sliders,
   Trash2,
   Scissors,
@@ -300,27 +299,6 @@ export default function CuttingSheetItem({
             />
           </div>
 
-          {/* Quick Mirror Toggle in Collapsed Bar */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              emitUpdate({ isMirrored: !sheet.isMirrored });
-            }}
-            className={`px-1.5 py-0.5 rounded-lg text-[9px] font-bold uppercase transition-all flex items-center gap-1 ${
-              sheet.isMirrored
-                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/50 shadow-xs'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-            title={
-              sheet.isMirrored
-                ? 'Mirror reflection active (Unfolded). Click to fold single sheet.'
-                : 'Click to Unfold & Reflect Pattern Drafting Flipped across center fold'
-            }
-          >
-            <FlipHorizontal className="w-3 h-3" />
-            <span>{sheet.isMirrored ? 'Mirrored 🪞' : 'Mirror'}</span>
-          </button>
-
           {/* Expand Controls Button */}
           <button
             onClick={() => setIsControlsExpanded(true)}
@@ -544,20 +522,6 @@ export default function CuttingSheetItem({
               </div>
             )}
           </div>
-
-          {/* Mirror Side-by-Side Toggle (Unfold Bodice View) */}
-          <button
-            onClick={() => emitUpdate({ isMirrored: !sheet.isMirrored })}
-            className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-all flex items-center gap-1 ${
-              sheet.isMirrored
-                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/50 shadow-xs'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-            title="Mirror Side-by-Side: Unfolds full bodice view across center fold line"
-          >
-            <FlipHorizontal className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{sheet.isMirrored ? 'Mirrored' : 'Mirror'}</span>
-          </button>
 
           {/* Seam Allowance Toggle */}
           <div className="relative">

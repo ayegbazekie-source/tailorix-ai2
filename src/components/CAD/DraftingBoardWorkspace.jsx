@@ -65,6 +65,7 @@ import {
   Magnet,
   Zap,
   Square,
+  GitMerge,
 } from 'lucide-react';
 
 import AdvancedTailorDrawer from './AdvancedTailorDrawer';
@@ -249,14 +250,14 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   });
   const tapeAutoHideTimerRef = useRef(null);
 
-  // Trigger auto-hide for tape measure after 10 seconds of inactivity
+  // Trigger auto-hide for tape measure after 30 seconds of inactivity
   const triggerTapeAutoHideTimer = () => {
     if (tapeAutoHideTimerRef.current) {
       clearTimeout(tapeAutoHideTimerRef.current);
     }
     tapeAutoHideTimerRef.current = setTimeout(() => {
       setTapeMeasure({ start: null, end: null, active: false, savedDist: null });
-    }, 10000);
+    }, 30000);
   };
 
   // Cursor position for the Laser Guide on the Scissors tool
@@ -279,6 +280,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [selectedLayerIdsForMerge, setSelectedLayerIdsForMerge] = useState([]);
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeGroupName, setMergeGroupName] = useState('');
+
+  // Workspace Toast Notification for immediate user feedback
+  const [workspaceToast, setWorkspaceToast] = useState(null);
+  const showToast = useCallback((message, type = 'info') => {
+    setWorkspaceToast({ message, type, id: Date.now() });
+    setTimeout(() => {
+      setWorkspaceToast((curr) => (curr && Date.now() - curr.id >= 2800 ? null : curr));
+    }, 3000);
+  }, []);
 
   // Sub-layer position auto-locking ticker (re-evaluates every second for 10s auto-lock)
   const [lockStatusTick, setLockStatusTick] = useState(0);
@@ -503,11 +513,28 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       });
       if (hitSheet) {
         if (selectedCuttingSheetId !== hitSheet.id) setSelectedCuttingSheetId(hitSheet.id);
-        const sheetLayer = layers.find((l) => l.sheetId === hitSheet.id || l.id === hitSheet.layerId);
-        if (sheetLayer) {
-          if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
-          return sheetLayer;
+        let sheetLayer = layers.find((l) => l.sheetId === hitSheet.id || l.id === hitSheet.layerId);
+        if (!sheetLayer) {
+          sheetLayer = {
+            id: hitSheet.layerId || `layer_sheet_${hitSheet.id}`,
+            sheetId: hitSheet.id,
+            name: `${hitSheet.name || 'Cutting Sheet'} Markings`,
+            bodiceType: 'Cutting Sheet Markings',
+            visible: true,
+            locked: Boolean(hitSheet.locked),
+            opacity: 1.0,
+            elements: [],
+            piece: null,
+            offsetX: 0,
+            offsetY: 0,
+            rotation: 0,
+          };
+          setLayers((prev) => [...prev, sheetLayer]);
+        } else if (sheetLayer.locked !== Boolean(hitSheet.locked)) {
+          sheetLayer.locked = Boolean(hitSheet.locked);
         }
+        if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
+        return sheetLayer;
       }
     }
 
@@ -515,11 +542,28 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     if (selectedCuttingSheetId) {
       const sheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId);
       if (sheet) {
-        const sheetLayer = layers.find((l) => l.sheetId === sheet.id || l.id === sheet.layerId);
-        if (sheetLayer) {
-          if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
-          return sheetLayer;
+        let sheetLayer = layers.find((l) => l.sheetId === sheet.id || l.id === sheet.layerId);
+        if (!sheetLayer) {
+          sheetLayer = {
+            id: sheet.layerId || `layer_sheet_${sheet.id}`,
+            sheetId: sheet.id,
+            name: `${sheet.name || 'Cutting Sheet'} Markings`,
+            bodiceType: 'Cutting Sheet Markings',
+            visible: true,
+            locked: Boolean(sheet.locked),
+            opacity: 1.0,
+            elements: [],
+            piece: null,
+            offsetX: 0,
+            offsetY: 0,
+            rotation: 0,
+          };
+          setLayers((prev) => [...prev, sheetLayer]);
+        } else if (sheetLayer.locked !== Boolean(sheet.locked)) {
+          sheetLayer.locked = Boolean(sheet.locked);
         }
+        if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
+        return sheetLayer;
       }
     }
 
@@ -722,6 +766,63 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         };
       })
     );
+  };
+
+  // Merge a specific sub-layer with its adjacent sub-layer within the same layer hierarchy
+  const handleMergeSubLayer = (layerId, elementId) => {
+    const parentLayer = layers.find((l) => l.id === layerId);
+    if (!parentLayer || !parentLayer.elements) return;
+
+    const elIndex = parentLayer.elements.findIndex((el) => el.id === elementId);
+    if (elIndex === -1) return;
+
+    if (parentLayer.elements.length < 2) {
+      showToast('Cannot merge: Layer requires at least 2 sub-layers to combine.', 'warning');
+      return;
+    }
+
+    const adjacentIndex = elIndex + 1 < parentLayer.elements.length ? elIndex + 1 : elIndex - 1;
+    const currentEl = parentLayer.elements[elIndex];
+    const adjacentEl = parentLayer.elements[adjacentIndex];
+
+    const currentPoints = currentEl.points || (currentEl.apex ? [currentEl.apex, ...(currentEl.legs || [])] : []);
+    const adjacentPoints = adjacentEl.points || (adjacentEl.apex ? [adjacentEl.apex, ...(adjacentEl.legs || [])] : []);
+
+    if (currentPoints.length === 0 && adjacentPoints.length === 0) {
+      showToast('Merge failed: Selected sub-layers do not contain vector stroke data.', 'error');
+      return;
+    }
+
+    pushUndoSnapshot();
+
+    const mergedPoints = [...currentPoints, ...adjacentPoints];
+    const mergedElement = {
+      id: `merged_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      tool: currentEl.tool || adjacentEl.tool || 'pen',
+      color: currentEl.color || adjacentEl.color || '#facc15',
+      size: Math.max(currentEl.size || 2, adjacentEl.size || 2),
+      opacity: currentEl.opacity ?? adjacentEl.opacity ?? 1.0,
+      visible: true,
+      points: mergedPoints,
+      pathData: renderPointsToPath(mergedPoints),
+      label: `Merged (${currentEl.label || 'Stroke'} + ${adjacentEl.label || 'Stroke'})`,
+      createdAt: Date.now(),
+      lastMovedAt: Date.now(),
+      positionLocked: false,
+    };
+
+    const firstIndex = Math.min(elIndex, adjacentIndex);
+    const updatedElements = parentLayer.elements.filter(
+      (el) => el.id !== currentEl.id && el.id !== adjacentEl.id
+    );
+    updatedElements.splice(firstIndex, 0, mergedElement);
+
+    setLayers((prev) =>
+      prev.map((l) => (l.id === layerId ? { ...l, elements: updatedElements } : l))
+    );
+
+    setSelectedElementId(mergedElement.id);
+    showToast(`Merged sub-layer with adjacent stroke successfully.`);
   };
 
   const moveLayerOrder = (id, direction) => {
@@ -1070,22 +1171,27 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     );
   };
 
-  // Wheel zoom handler: Smooth zoom up to 4x (400% magnification) anchored to cursor
+  // Wheel zoom handler: Smooth zoom up to 4x (400% magnification) anchored to cursor, clamped to MIN_ZOOM (1.0)
   const handleWheel = (e) => {
     e.preventDefault();
+    const DRAFTING_MIN_ZOOM = 1.0;
     const zoomDelta = e.deltaY < 0 ? 1.12 : 0.89;
-    const nextZoom = Math.max(0.25, Math.min(4.0, Math.round(zoom * zoomDelta * 100) / 100));
+    const nextZoom = Math.max(DRAFTING_MIN_ZOOM, Math.min(4.0, Math.round(zoom * zoomDelta * 100) / 100));
     if (nextZoom === zoom) return;
 
-    const container = containerRef.current || canvasSvgRef.current;
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const scaleRatio = nextZoom / zoom;
-      const newPanX = mouseX - (mouseX - panOffset.x) * scaleRatio;
-      const newPanY = mouseY - (mouseY - panOffset.y) * scaleRatio;
-      setPanOffset({ x: Math.round(newPanX), y: Math.round(newPanY) });
+    if (nextZoom <= DRAFTING_MIN_ZOOM) {
+      setPanOffset({ x: 0, y: 0 });
+    } else {
+      const container = containerRef.current || canvasSvgRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const scaleRatio = nextZoom / zoom;
+        const newPanX = mouseX - (mouseX - panOffset.x) * scaleRatio;
+        const newPanY = mouseY - (mouseY - panOffset.y) * scaleRatio;
+        setPanOffset({ x: Math.round(newPanX), y: Math.round(newPanY) });
+      }
     }
     setZoom(nextZoom);
   };
@@ -1199,8 +1305,22 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   const handleSnapSeamEdge = (points, rulerName = 'Ruler Edge') => {
     if (!points || points.length < 2) return;
-    const currentLayer = ensureActiveLayer();
+    const currentLayer = ensureActiveLayer(points[0]);
     if (!currentLayer || currentLayer.locked || !currentLayer.visible) return;
+
+    // Check if points lie on a cutting sheet
+    const hitSheet = cuttingSheets.find((s) => {
+      const effW = s.isMirrored ? s.width * 2 : s.width;
+      return (
+        points[0].x >= s.x &&
+        points[0].x <= s.x + effW &&
+        points[0].y >= s.y &&
+        points[0].y <= s.y + s.height
+      );
+    });
+    if (hitSheet && hitSheet.locked) return;
+
+    const strokeColor = hitSheet?.chalkColor || (activeTool === 'chalk' ? brushColor || '#facc15' : brushColor);
 
     const baseId = `stroke_ruler_snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const originalPoints = points.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }));
@@ -1208,7 +1328,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       id: baseId,
       tool: activeTool === 'scissors' ? 'scissors' : 'pen',
       points: originalPoints,
-      color: activeTool === 'chalk' ? '#facc15' : brushColor,
+      color: strokeColor,
       size: Math.max(2, brushSize),
       opacity: 1.0,
       visible: true,
@@ -1359,8 +1479,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   // 10. Pointer Down / Drawing / Moving
   // -------------------------------------------------------------------------
   const handlePointerDown = (e) => {
-    // If middle click or space key pressed, initiate pan
-    if (e.button === 1 || e.spaceKey) {
+    // If middle click or space key pressed, initiate pan only when zoomed beyond baseline
+    if ((e.button === 1 || e.spaceKey) && zoom > 1.0) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
       return;
@@ -1469,18 +1589,27 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
       if (markedLayerIds.length === 0) {
         if (clickedSheet) {
+          if (clickedSheet.locked) {
+            // Locked cutting sheet: select for inspection but do NOT drag
+            setSelectedCuttingSheetId(clickedSheet.id);
+            setIsMovingPiece(false);
+            return;
+          }
           setSelectedCuttingSheetId(clickedSheet.id);
           const sheetLayerId = clickedSheet.layerId || `layer_sheet_${clickedSheet.id}`;
           markedLayerIds = [sheetLayerId];
           setActiveLayerId(sheetLayerId);
-        } else if (activeLayerId) {
-          markedLayerIds = [activeLayerId];
-        } else if (layers.length > 0) {
-          markedLayerIds = [layers[0].id];
+        } else {
+          // Tapped on empty canvas space:
+          // Deselect selected element, cutting sheet, and leave viewport and layers completely stable without moving!
+          setSelectedElementId(null);
+          setSelectedCuttingSheetId(null);
+          setIsMovingPiece(false);
+          return;
         }
       }
 
-      const targetLayers = layers.filter((l) => markedLayerIds.includes(l.id));
+      const targetLayers = layers.filter((l) => markedLayerIds.includes(l.id) && !l.locked);
       if (targetLayers.length > 0) {
         preMoveSnapshotRef.current = {
           layers: JSON.parse(JSON.stringify(layers)),
@@ -2269,15 +2398,25 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     });
   };
 
-  // Finger Zooming & Fluid Touch Handling (Allows pinch zoom on piece_move or board, prevents board movement when writing with pen)
+  // Finger Zooming & Fluid Touch Handling (Strict separation: Two-finger gestures zoom and pan viewport, single finger draws/interacts)
   const handleTouchStart = (e) => {
     if (e.touches.length === 2) {
+      setIsPointerDown(false);
+      setIsMovingPiece(false);
+      setCurrentStroke(null);
+
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
       touchZoomRef.current = {
         startDist: dist,
         startZoom: zoom,
+        startMidX: midX,
+        startMidY: midY,
+        startPanX: panOffset.x,
+        startPanY: panOffset.y,
       };
       if (e.cancelable) e.preventDefault();
       return;
@@ -2295,9 +2434,23 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      const ratio = dist / touchZoomRef.current.startDist;
-      const newZoom = Math.min(4.0, Math.max(0.25, Math.round(touchZoomRef.current.startZoom * ratio * 100) / 100));
+      const ratio = dist / (touchZoomRef.current.startDist || 1);
+      const newZoom = Math.min(4.0, Math.max(1.0, Math.round(touchZoomRef.current.startZoom * ratio * 100) / 100));
+
+      const currentMidX = (t1.clientX + t2.clientX) / 2;
+      const currentMidY = (t1.clientY + t2.clientY) / 2;
+      const panDx = currentMidX - touchZoomRef.current.startMidX;
+      const panDy = currentMidY - touchZoomRef.current.startMidY;
+
       setZoom(newZoom);
+      if (newZoom <= 1.0) {
+        setPanOffset({ x: 0, y: 0 });
+      } else {
+        setPanOffset({
+          x: Math.round(touchZoomRef.current.startPanX + panDx),
+          y: Math.round(touchZoomRef.current.startPanY + panDy),
+        });
+      }
       return;
     }
     if (e.touches.length === 1) {
@@ -2730,16 +2883,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
             <button
               onClick={() => {
-                setActiveTool('magnifier');
-                setLensState({
-                  visible: true,
-                  x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
-                  y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
-                  screenX: cursorPos.x || 500,
-                  screenY: cursorPos.y || 400,
-                  tool: 'magnifier',
-                  label: '2.5x Focus Loupe',
-                });
+                if (activeTool === 'magnifier') {
+                  setActiveTool('pen');
+                  setLensState(null);
+                } else {
+                  setActiveTool('magnifier');
+                  setLensState({
+                    visible: true,
+                    x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
+                    y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
+                    screenX: cursorPos.x || 500,
+                    screenY: cursorPos.y || 400,
+                    tool: 'magnifier',
+                    label: '2.5x Focus Loupe',
+                  });
+                }
               }}
               className={`p-2 rounded-xl text-xs transition-all ${
                 activeTool === 'magnifier' ? 'bg-amber-400 text-slate-950 font-bold shadow-gold-sm' : 'text-amber-400/80 hover:bg-slate-800 hover:text-amber-300'
@@ -2945,16 +3103,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               {/* Precision Loupe / Magnifying Glass */}
               <button
                 onClick={() => {
-                  setActiveTool('magnifier');
-                  setLensState({
-                    visible: true,
-                    x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
-                    y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
-                    screenX: cursorPos.x || 500,
-                    screenY: cursorPos.y || 400,
-                    tool: 'magnifier',
-                    label: '2.5x Focus Loupe',
-                  });
+                  if (activeTool === 'magnifier') {
+                    setActiveTool('pen');
+                    setLensState(null);
+                  } else {
+                    setActiveTool('magnifier');
+                    setLensState({
+                      visible: true,
+                      x: cursorPos.x ? (cursorPos.x - panOffset.x) / zoom : 500,
+                      y: cursorPos.y ? (cursorPos.y - panOffset.y) / zoom : 400,
+                      screenX: cursorPos.x || 500,
+                      screenY: cursorPos.y || 400,
+                      tool: 'magnifier',
+                      label: '2.5x Focus Loupe',
+                    });
+                  }
                 }}
                 className={`flex items-center gap-2 p-2 rounded-xl text-xs transition-all font-medium ${
                   activeTool === 'magnifier'
@@ -3717,6 +3880,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                       ) : (
                                         <EyeOff className="w-3 h-3 text-slate-600" />
                                       )}
+                                    </button>
+
+                                    {/* Merge Sub-Layer Button */}
+                                    <button
+                                      onClick={() => handleMergeSubLayer(layer.id, el.id)}
+                                      className="p-1 hover:text-amber-300 text-slate-400 hover:bg-slate-800 rounded transition-colors"
+                                      title="Merge this sub-layer line with adjacent stroke"
+                                    >
+                                      <GitMerge className="w-3 h-3" />
                                     </button>
 
                                     {/* Delete / Erase Individual Line (Always allowed per user specification) */}
@@ -4535,11 +4707,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       return (
                         <g transform={`translate(${midX}, ${midY - 14})`} className="cursor-pointer" onClick={() => setTapeMeasure({ start: null, end: null, active: false, savedDist: null })}>
                           <rect
-                            x="-64"
-                            y="-16"
-                            width="128"
-                            height="30"
-                            rx="7"
+                            x="-52"
+                            y="-12"
+                            width="104"
+                            height="24"
+                            rx="6"
                             fill="#0d1322"
                             fillOpacity="0.94"
                             stroke="#f59e0b"
@@ -4547,7 +4719,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           />
                           <text
                             x="0"
-                            y="-2"
+                            y="4"
                             fill="#fbbf24"
                             fontSize="11"
                             fontWeight="bold"
@@ -4555,18 +4727,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             fontFamily="monospace"
                           >
                             {distInches}" ({distCm}cm)
-                          </text>
-                          <text
-                            x="0"
-                            y="9"
-                            fill="#94a3b8"
-                            fontSize="7.5"
-                            fontWeight="bold"
-                            textAnchor="middle"
-                            fontFamily="sans-serif"
-                            letterSpacing="0.5"
-                          >
-                            AUTO-HIDES IN 10s • CLICK TO DISMISS
                           </text>
                         </g>
                       );
@@ -4804,9 +4964,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         >
           {/* Zoom Out Button */}
           <button
-            onClick={() => setZoom((prev) => Math.max(0.25, Math.round((prev - 0.25) * 100) / 100))}
+            onClick={() =>
+              setZoom((prev) => {
+                const next = Math.max(1.0, Math.round((prev - 0.25) * 100) / 100);
+                if (next <= 1.0) setPanOffset({ x: 0, y: 0 });
+                return next;
+              })
+            }
             className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-300 rounded-xl transition-all"
-            title="Zoom Out (Min 25%)"
+            title="Zoom Out (Min 100%)"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
@@ -4926,7 +5092,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           activeRulers={activeRulers}
           brushSize={brushSize}
           currentStroke={currentStroke}
+          onClose={() => {
+            setLensState(null);
+            if (activeTool === 'magnifier') setActiveTool('pen');
+          }}
         />
+
+        {/* Workspace Toast Notification */}
+        {workspaceToast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#0d1322]/95 backdrop-blur-xl border border-amber-500/80 px-5 py-2.5 rounded-2xl shadow-2xl text-slate-100 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-3 text-xs font-semibold pointer-events-none">
+            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{workspaceToast.message}</span>
+          </div>
+        )}
 
         {/* ======================================================================= */}
         {/* PERSISTENT ZOOM-SAFE FLOATING TOGGLES DOCK                              */}

@@ -138,10 +138,11 @@ export default function TailorRulerOverlay({
   // Translation Drag Engine with Pointer Capture
   const handleStartDrag = (e, forceMove = false) => {
     if (e.button !== undefined && e.button !== 0) return;
-    // If not in move mode and locked, clicking body does not drag (allows tracing)
-    if (!forceMove && !isMove && ruler.locked) return;
+    // Strict lock enforcement: if locked, no dragging allowed
+    if (ruler.locked) return;
+    if (!forceMove && !isMove) return;
 
-    if (forceMove && (!isMove || ruler.locked)) {
+    if (forceMove && !isMove) {
       updateRuler(ruler.id, { isMoveMode: true, locked: false });
     }
 
@@ -204,8 +205,15 @@ export default function TailorRulerOverlay({
     window.addEventListener('touchend', onPointerUp);
   };
 
-  // Nudge Position buttons for exact alignment
-  const handleNudge = (dx, dy) => {
+  // Local Nudge: when a ruler or curve is rotated, nudge buttons must nudge along its LOCAL oriented axes (forward/backward along edge, perpendicular to edge), NOT pure screen X/Y
+  const handleNudge = (localX, localY) => {
+    if (ruler.locked) return;
+    const rad = ((ruler.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    // Transform local coordinate delta to global coordinate delta
+    const dx = localX * cos - localY * sin;
+    const dy = localX * sin + localY * cos;
     updateRuler(ruler.id, {
       x: Math.round(ruler.x + dx),
       y: Math.round(ruler.y + dy),
@@ -215,7 +223,7 @@ export default function TailorRulerOverlay({
   // Dedicated Rotation Handle Drag
   const handleRotatePointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
-    if (ruler.locked && !isMove) return;
+    if (ruler.locked) return;
     e.stopPropagation();
     setIsRotating(true);
 
@@ -251,16 +259,19 @@ export default function TailorRulerOverlay({
   // Flip Actions
   const handleFlipHorizontal = (e) => {
     e.stopPropagation();
+    if (ruler.locked) return;
     updateRuler(ruler.id, { flipX: !ruler.flipX });
   };
 
   const handleFlipVertical = (e) => {
     e.stopPropagation();
+    if (ruler.locked) return;
     updateRuler(ruler.id, { flipY: !ruler.flipY });
   };
 
   // Rotation Presets
   const stepRotation = (delta) => {
+    if (ruler.locked) return;
     const newRot = Math.round(((ruler.rotation || 0) + delta + 360) % 360);
     updateRuler(ruler.id, { rotation: newRot });
   };
@@ -268,11 +279,13 @@ export default function TailorRulerOverlay({
   // Scale / Size Adjustment
   const currentScale = ruler.scale || 1.0;
   const handleAdjustScale = (delta) => {
+    if (ruler.locked) return;
     const next = Math.max(0.25, Math.min(2.5, Math.round((currentScale + delta) * 20) / 20));
     updateRuler(ruler.id, { scale: next });
   };
 
   const handleSetScale = (val) => {
+    if (ruler.locked) return;
     updateRuler(ruler.id, { scale: val });
   };
 
@@ -371,6 +384,7 @@ export default function TailorRulerOverlay({
         resetAutoHideTimer();
       }}
       onDoubleClick={() => {
+        if (ruler.locked) return;
         updateRuler(ruler.id, { isMoveMode: true, locked: false });
         resetAutoHideTimer();
       }}
@@ -784,7 +798,7 @@ export default function TailorRulerOverlay({
         </div>
 
         {/* Floating Center Move Disc (Prominent Tactile Drag Handle) */}
-        {(isMove || isSelected) && (
+        {(isMove || isSelected) && !ruler.locked && (
           <div
             onPointerDown={(e) => {
               resetAutoHideTimer();
@@ -872,7 +886,7 @@ export default function TailorRulerOverlay({
         </svg>
 
         {/* Free-Hand Rotation Circular Grip Handle */}
-        {isSelected && (
+        {isSelected && !ruler.locked && (
           <div
             onPointerDown={handleRotatePointerDown}
             className="absolute -bottom-7 right-4 z-40 flex items-center gap-1.5 px-2 py-1 bg-slate-900 border border-amber-400/80 rounded-xl text-amber-300 text-[10px] font-bold cursor-ew-resize shadow-xl hover:bg-slate-800 transition-colors"

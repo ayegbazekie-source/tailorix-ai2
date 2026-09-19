@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, ZoomIn, Target, Eraser, PenTool, Crosshair } from 'lucide-react';
+import { Sparkles, ZoomIn, Target, Eraser, PenTool, Crosshair, X } from 'lucide-react';
 import { TAILOR_RULERS_CATALOG, getRulerDimensions } from './TailorRulersCatalog';
 
 // Helper to convert array of points to smooth SVG path
@@ -20,6 +20,7 @@ export default function MagnifyingGlassLoupe({
   activeRulers = [],
   brushSize = 3,
   currentStroke = null,
+  onClose,
 }) {
   const [magnification, setMagnification] = useState(2.5); // 2.0x, 2.5x, 3.0x
 
@@ -138,11 +139,11 @@ export default function MagnifyingGlassLoupe({
                     y={sheet.y}
                     width={effW}
                     height={sheet.height}
-                    fill="#0f172a"
-                    stroke="#38bdf8"
-                    strokeWidth="1.2"
+                    fill={sheet.color || '#ffffff'}
+                    fillOpacity={sheet.color === '#ffffff' ? 0.95 : 0.88}
+                    stroke={sheet.color === '#ffffff' ? '#94a3b8' : '#e2e8f0'}
+                    strokeWidth="1.5"
                     strokeDasharray="4 2"
-                    opacity={0.8}
                   />
                   {/* Fold Line */}
                   {sheet.isMirrored && (
@@ -369,7 +370,19 @@ export default function MagnifyingGlassLoupe({
       )}
 
       {/* Attached Precision Readout Badge */}
-      <div className="mt-1 bg-[#090e1a]/95 backdrop-blur-md border border-amber-400/80 rounded-xl px-3 py-1 shadow-2xl text-center min-w-[160px]">
+      <div className="mt-1 bg-[#090e1a]/95 backdrop-blur-md border border-amber-400/80 rounded-xl px-3 py-1 shadow-2xl text-center min-w-[160px] relative pointer-events-auto">
+        {onClose && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+            title="Close Magnifying Glass Loupe"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
         <div className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center justify-center gap-1">
           {isEraser ? (
             <Eraser className="w-3 h-3 text-red-400" />

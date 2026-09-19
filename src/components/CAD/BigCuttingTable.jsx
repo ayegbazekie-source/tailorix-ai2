@@ -53,6 +53,7 @@ import {
   SlidersHorizontal,
   Save,
   Copy,
+  Ruler,
 } from 'lucide-react';
 import { SLOPER_BLOCK_TEMPLATES } from '../../templates/presetLibrary';
 
@@ -102,6 +103,31 @@ export const FLAT_FABRIC_PRESETS = [
   },
 ];
 
+// Helper: Calculate contained and centered geometry for fabric inside the green rack
+export const calculateContainedFabricGeometry = (widthInches, lengthInches, tableW = 2200, tableH = 1200) => {
+  const rackXMin = 60;
+  const rackXMax = tableW - 60;
+  const rackYMin = 84;
+  const rackYMax = tableH - 60;
+  const usableW = rackXMax - rackXMin; // 2080
+  const usableH = rackYMax - rackYMin; // 1056
+
+  const safeW = Math.max(12, widthInches || 54);
+  const safeL = Math.max(12, lengthInches || 90);
+
+  const scaleByW = usableW / safeW;
+  const scaleByH = usableH / safeL;
+  const scalePxPerInch = Math.min(scaleByW, scaleByH);
+
+  const pixelW = Math.round(safeW * scalePxPerInch);
+  const pixelH = Math.round(safeL * scalePxPerInch);
+
+  const x = Math.round(rackXMin + (usableW - pixelW) / 2);
+  const y = Math.round(rackYMin + (usableH - pixelH) / 2);
+
+  return { x, y, scalePxPerInch, pixelW, pixelH };
+};
+
 const BigCuttingTable = forwardRef(function BigCuttingTable({
   layers = [],
   cuttingSheets = [],
@@ -125,10 +151,44 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const tableBenchRef = useRef(null);
   const twoFingerStartRef = useRef(null);
   const [tableZoom, setTableZoom] = useState(0.75);
+  const [tablePanOffset, setTablePanOffset] = useState({ x: 0, y: 0 });
+  const [isTablePanning, setIsTablePanning] = useState(false);
+  const tablePanStartRef = useRef({ x: 0, y: 0 });
+  const [availableWidth, setAvailableWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [activeDrawerTab, setActiveDrawerTab] = useState('layers'); // 'layers' | 'tools'
+
+  // Responsive tracking of available canvas width for toolbar adaptations
+  useEffect(() => {
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setAvailableWidth(containerRef.current.clientWidth || window.innerWidth);
+      } else {
+        setAvailableWidth(window.innerWidth);
+      }
+    };
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, []);
+
+  // Tape Measure state on Cutting Table with 10-second auto-dismiss and manual clear
+  const [tableTapeMeasure, setTableTapeMeasure] = useState({
+    start: null,
+    end: null,
+    active: false,
+  });
+  const tableTapeTimerRef = useRef(null);
+
+  const triggerTableTapeTimer = useCallback(() => {
+    if (tableTapeTimerRef.current) clearTimeout(tableTapeTimerRef.current);
+    tableTapeTimerRef.current = setTimeout(() => {
+      setTableTapeMeasure({ start: null, end: null, active: false });
+    }, 10000);
+  }, []);
 
   // -------------------------------------------------------------------------
   // 2. Tools: Scissors (✂️), Pen (✍️), and Move (Movable Tool)
-  // 'scissors' | 'pen' | 'move' | 'select' | 'pan'
+  // 'scissors' | 'pen' | 'move' | 'select' | 'pan' | 'tape_measure'
   // -------------------------------------------------------------------------
   const [activeTool, setActiveTool] = useState('scissors');
   const [isDrawingMode, setIsDrawingMode] = useState(false);
@@ -170,12 +230,13 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   // Fabric Adjuster Tool Modal / Control State
   const [showFabricAdjuster, setShowFabricAdjuster] = useState(false);
 
-  // Fabric Adjuster: Adjust Fabric Width (in inches)
+  // Fabric Adjuster: Adjust Fabric Width (in inches) — strictly contained inside green rack
   const handleAdjustFabricWidth = (delta) => {
     pushState(`Adjust Fabric Width ${delta > 0 ? '+' : ''}${delta}"`);
     setFabricConfig((prev) => {
       const nextW = Math.max(24, Math.min(130, prev.widthInches + delta));
-      return { ...prev, widthInches: nextW };
+      const geom = calculateContainedFabricGeometry(nextW, prev.lengthInches, TABLE_WIDTH, TABLE_HEIGHT);
+      return { ...prev, widthInches: nextW, ...geom };
     });
     setCuttingToast({
       message: `Fabric Width adjusted to ${Math.max(24, Math.min(130, fabricConfig.widthInches + delta))}"`,
@@ -184,12 +245,13 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     setTimeout(() => setCuttingToast(null), 2200);
   };
 
-  // Fabric Adjuster: Adjust Fabric Length (in inches / yards)
+  // Fabric Adjuster: Adjust Fabric Length (in inches / yards) — strictly contained inside green rack
   const handleAdjustFabricLength = (delta) => {
     pushState(`Adjust Fabric Length ${delta > 0 ? '+' : ''}${delta}"`);
     setFabricConfig((prev) => {
       const nextL = Math.max(36, Math.min(360, prev.lengthInches + delta));
-      return { ...prev, lengthInches: nextL };
+      const geom = calculateContainedFabricGeometry(prev.widthInches, nextL, TABLE_WIDTH, TABLE_HEIGHT);
+      return { ...prev, lengthInches: nextL, ...geom };
     });
     const nextTotalL = Math.max(36, Math.min(360, fabricConfig.lengthInches + delta));
     setCuttingToast({
@@ -210,19 +272,20 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const [currentPenStroke, setCurrentPenStroke] = useState(null);
 
   // -------------------------------------------------------------------------
-  // 3. Flat Fabric on the Big Table
+  // 3. Flat Fabric on the Big Table (Contained + Centered in Rack)
   // -------------------------------------------------------------------------
   const [fabricConfig, setFabricConfig] = useState(() => {
+    const initGeom = calculateContainedFabricGeometry(54, 90, 2200, 1200);
     const base = {
       id: 'fabric_bolt_1',
       name: '14.5oz Raw Selvedge Denim',
       presetId: 'selvedge_denim',
       customImageUrl: null,
-      x: 320,
-      y: 190,
+      x: initGeom.x,
+      y: initGeom.y,
       widthInches: 54, // 54 inches wide
       lengthInches: 90, // 2.5 yards (90 inches) long
-      scalePxPerInch: 14, // 1 inch = 14px on table
+      scalePxPerInch: initGeom.scalePxPerInch, // Computed to fit inside rack without overflow
       grainLabel: 'Warp Twill Grain (Selvedge to Selvedge)',
       visible: false, // Default to FALSE so initial table is a clean green cutting rack
       rotation: 0,
@@ -230,7 +293,11 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     };
     try {
       const saved = sessionStorage.getItem('tailorix_session_fabric_config');
-      if (saved) return { ...base, ...JSON.parse(saved) };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const geom = calculateContainedFabricGeometry(parsed.widthInches || 54, parsed.lengthInches || 90, 2200, 1200);
+        return { ...base, ...parsed, ...geom };
+      }
     } catch {}
     return base;
   });
@@ -575,18 +642,25 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     setFabricConfig((prev) => {
       let newX = prev.x;
       let newY = prev.y;
+      const curPixelW = prev.widthInches * prev.scalePxPerInch;
+      const curPixelH = prev.lengthInches * prev.scalePxPerInch;
+      const minX = 60;
+      const maxX = Math.max(minX, TABLE_WIDTH - 60 - curPixelW);
+      const minY = 84;
+      const maxY = Math.max(minY, TABLE_HEIGHT - 60 - curPixelH);
+
       switch (direction) {
         case 'left':
-          newX = Math.max(TABLE_PADDING_X, prev.x - stepDistance);
+          newX = Math.max(minX, prev.x - stepDistance);
           break;
         case 'right':
-          newX = Math.min(TABLE_WIDTH - 200, prev.x + stepDistance);
+          newX = Math.min(maxX, prev.x + stepDistance);
           break;
         case 'up':
-          newY = Math.max(TABLE_PADDING_Y_TOP, prev.y - stepDistance);
+          newY = Math.max(minY, prev.y - stepDistance);
           break;
         case 'down':
-          newY = Math.min(TABLE_HEIGHT - 200, prev.y + stepDistance);
+          newY = Math.min(maxY, prev.y + stepDistance);
           break;
         default:
           break;
@@ -598,7 +672,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       timestamp: Date.now(),
     });
     setTimeout(() => setCuttingToast(null), 2000);
-  }, [activeTool, isFabricMoveEnabled, pushState, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_WIDTH, TABLE_HEIGHT]);
+  }, [activeTool, isFabricMoveEnabled, pushState, TABLE_WIDTH, TABLE_HEIGHT]);
 
   // Keyboard shortcut listener (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z)
   useEffect(() => {
@@ -620,27 +694,66 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   }, [handleUndo, handleRedo]);
 
   // -------------------------------------------------------------------------
-  // 10. Center and Fit Table Inside Viewport (Stationary Position)
+  // 10. Center and Fit Table Inside Viewport (Baseline Zoom & Minimum Clamp)
+  // Mobile: Clamped to 100% (1.0) baseline zoom
+  // Desktop: Clamped to desktop full-rack layout baseline scale
+  // Panning allowed ONLY when zoomed beyond baseline.
   // -------------------------------------------------------------------------
-  const centerAndFitTable = useCallback(() => {
-    if (!containerRef.current) return;
+  const getMinZoom = useCallback(() => {
+    if (!containerRef.current) return 1.0;
     const { clientWidth, clientHeight } = containerRef.current;
-    if (clientWidth <= 0 || clientHeight <= 0) return;
-
-    const pad = 32;
-    const scaleX = (clientWidth - pad * 2) / TABLE_WIDTH;
-    const scaleY = (clientHeight - pad * 2) / TABLE_HEIGHT;
-    const initialFit = Math.min(scaleX, scaleY);
-    const clampedFit = Math.max(0.35, Math.min(1.2, Math.round(initialFit * 100) / 100));
-
-    setTableZoom(clampedFit);
+    if (clientWidth <= 0 || clientHeight <= 0) return 1.0;
+    if (clientWidth < 768) {
+      return 1.0;
+    }
+    const scaleX = clientWidth / TABLE_WIDTH;
+    const scaleY = clientHeight / TABLE_HEIGHT;
+    const desktopBaseline = Math.round(Math.min(scaleX, scaleY) * 100) / 100;
+    return Math.max(0.2, Math.min(1.0, desktopBaseline));
   }, [TABLE_WIDTH, TABLE_HEIGHT]);
+
+  const applyTableZoom = useCallback((newZoomOrUpdater) => {
+    const minZ = getMinZoom();
+    setTableZoom((prevZoom) => {
+      const targetZoom = typeof newZoomOrUpdater === 'function' ? newZoomOrUpdater(prevZoom) : newZoomOrUpdater;
+      const clamped = Math.max(minZ, Math.min(2.5, Math.round(targetZoom * 100) / 100));
+      if (clamped <= minZ + 0.005) {
+        setTablePanOffset({ x: 0, y: 0 });
+      }
+      return clamped;
+    });
+  }, [getMinZoom]);
+
+  const centerAndFitTable = useCallback(() => {
+    const minZ = getMinZoom();
+    setTableZoom(minZ);
+    setTablePanOffset({ x: 0, y: 0 });
+    setFabricConfig((prev) => {
+      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, TABLE_WIDTH, TABLE_HEIGHT);
+      return { ...prev, ...geom };
+    });
+  }, [getMinZoom, TABLE_WIDTH, TABLE_HEIGHT]);
 
   useEffect(() => {
     centerAndFitTable();
+    let ro = null;
+    let timeoutId = null;
+    if (containerRef.current && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          centerAndFitTable();
+        }, 100);
+      });
+      ro.observe(containerRef.current);
+    }
     const handleResize = () => centerAndFitTable();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(timeoutId);
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
   }, [centerAndFitTable]);
 
   // Transform client screen coordinates to table world coordinates
@@ -653,30 +766,50 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     };
   }, [tableZoom]);
 
-  // Zooming via Wheel (Unrestricted, centered on table bench)
+  // Zooming via Wheel & Trackpad Pan (Enforces MIN_ZOOM and pan stability at baseline)
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
 
     const handleWheelZoom = (e) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-      setTableZoom((prevZoom) => {
-        return Math.max(0.35, Math.min(2.2, Math.round(prevZoom * zoomFactor * 100) / 100));
-      });
+      const minZ = getMinZoom();
+      if (e.ctrlKey || e.metaKey) {
+        const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+        setTableZoom((prevZoom) => {
+          const nextZ = Math.max(minZ, Math.min(2.5, Math.round(prevZoom * zoomFactor * 100) / 100));
+          if (nextZ <= minZ + 0.005) {
+            setTablePanOffset({ x: 0, y: 0 });
+          }
+          return nextZ;
+        });
+      } else {
+        // Panning is only permitted when zoomed in beyond baseline!
+        setTableZoom((curZoom) => {
+          if (curZoom > minZ + 0.005) {
+            setTablePanOffset((prev) => ({
+              x: Math.round(prev.x - e.deltaX),
+              y: Math.round(prev.y - e.deltaY),
+            }));
+          }
+          return curZoom;
+        });
+      }
     };
 
     node.addEventListener('wheel', handleWheelZoom, { passive: false });
     return () => node.removeEventListener('wheel', handleWheelZoom);
-  }, []);
+  }, [getMinZoom]);
 
-  // Touch Pinch-Zoom (Maintains locked stationary table placement)
+  // Touch Pinch-Zoom & Two-Finger Pan (Enforces MIN_ZOOM and pan stability at baseline)
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
 
     let initialDist = null;
     let initialZoom = 1;
+    let initialCenter = null;
+    let initialPan = { x: 0, y: 0 };
 
     const handleTouchStart = (e) => {
       if (e.touches && e.touches.length === 2) {
@@ -685,24 +818,44 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
         const t2 = e.touches[1];
         initialDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
         initialZoom = tableZoom;
+        initialCenter = {
+          x: (t1.clientX + t2.clientX) / 2,
+          y: (t1.clientY + t2.clientY) / 2,
+        };
+        initialPan = { ...tablePanOffset };
       }
     };
 
     const handleTouchMove = (e) => {
-      if (e.touches && e.touches.length === 2 && initialDist) {
+      if (e.touches && e.touches.length === 2 && initialDist && initialCenter) {
         e.preventDefault();
+        const minZ = getMinZoom();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         const currentDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
         const scale = currentDist / initialDist;
-        const targetZoom = Math.max(0.35, Math.min(2.2, Math.round(initialZoom * scale * 100) / 100));
+        const targetZoom = Math.max(minZ, Math.min(2.5, Math.round(initialZoom * scale * 100) / 100));
         setTableZoom(targetZoom);
+
+        if (targetZoom <= minZ + 0.005) {
+          setTablePanOffset({ x: 0, y: 0 });
+        } else {
+          const curCenter = {
+            x: (t1.clientX + t2.clientX) / 2,
+            y: (t1.clientY + t2.clientY) / 2,
+          };
+          setTablePanOffset({
+            x: Math.round(initialPan.x + (curCenter.x - initialCenter.x)),
+            y: Math.round(initialPan.y + (curCenter.y - initialCenter.y)),
+          });
+        }
       }
     };
 
     const handleTouchEnd = (e) => {
       if (!e.touches || e.touches.length < 2) {
         initialDist = null;
+        initialCenter = null;
       }
     };
 
@@ -714,7 +867,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       node.removeEventListener('touchmove', handleTouchMove);
       node.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [tableZoom]);
+  }, [tableZoom, tablePanOffset, getMinZoom]);
 
   // Detect whether a layer / pattern is situated on the fabric
   const isPatternOverFabric = useCallback((pat) => {
@@ -982,22 +1135,32 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   // -------------------------------------------------------------------------
   const handleExpandFabric = (deltaW, deltaL) => {
     pushState(deltaL !== 0 ? `${deltaL > 0 ? 'Add' : 'Subtract'} Fabric Yardage` : `${deltaW > 0 ? 'Widen' : 'Narrow'} Fabric Bolt`);
-    setFabricConfig((prev) => ({
-      ...prev,
-      widthInches: Math.max(36, Math.min(100, prev.widthInches + deltaW)),
-      lengthInches: Math.max(36, Math.min(250, prev.lengthInches + deltaL)),
-    }));
+    setFabricConfig((prev) => {
+      const nextW = Math.max(36, Math.min(100, prev.widthInches + deltaW));
+      const nextL = Math.max(36, Math.min(250, prev.lengthInches + deltaL));
+      const geom = calculateContainedFabricGeometry(nextW, nextL, TABLE_WIDTH, TABLE_HEIGHT);
+      return {
+        ...prev,
+        widthInches: nextW,
+        lengthInches: nextL,
+        ...geom,
+      };
+    });
   };
 
   const handleSelectPresetFabric = (preset) => {
     pushState(`Change Fabric to ${preset.name}`);
-    setFabricConfig((prev) => ({
-      ...prev,
-      presetId: preset.id,
-      customImageUrl: null,
-      name: preset.name,
-      grainLabel: preset.grainLabel,
-    }));
+    setFabricConfig((prev) => {
+      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, TABLE_WIDTH, TABLE_HEIGHT);
+      return {
+        ...prev,
+        presetId: preset.id,
+        customImageUrl: null,
+        name: preset.name,
+        grainLabel: preset.grainLabel,
+        ...geom,
+      };
+    });
   };
 
   const handleUploadCustomFabric = (file) => {
@@ -1005,12 +1168,16 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     const reader = new FileReader();
     reader.onload = (e) => {
       pushState('Upload Custom Flat Fabric');
-      setFabricConfig((prev) => ({
-        ...prev,
-        customImageUrl: e.target.result,
-        name: file.name.replace(/\.[^/.]+$/, '') || 'Custom Fabric Bolt',
-        grainLabel: 'Custom Uploaded Fabric Grain',
-      }));
+      setFabricConfig((prev) => {
+        const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, TABLE_WIDTH, TABLE_HEIGHT);
+        return {
+          ...prev,
+          customImageUrl: e.target.result,
+          name: file.name.replace(/\.[^/.]+$/, '') || 'Custom Fabric Bolt',
+          grainLabel: 'Custom Uploaded Fabric Grain',
+          ...geom,
+        };
+      });
     };
     reader.readAsDataURL(file);
   };
@@ -1385,6 +1552,30 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   };
 
   const handleTableMouseDown = (e) => {
+    // Tape Measure mode on Cutting Table
+    if (activeTool === 'tape_measure') {
+      const coords = getTableWorldCoords(e.clientX, e.clientY);
+      triggerTableTapeTimer();
+      if (!tableTapeMeasure.start || (tableTapeMeasure.start && !tableTapeMeasure.active)) {
+        setTableTapeMeasure({ start: coords, end: coords, active: true });
+      } else if (tableTapeMeasure.start && tableTapeMeasure.active) {
+        setTableTapeMeasure({ start: tableTapeMeasure.start, end: coords, active: false });
+      }
+      return;
+    }
+
+    // Panning table with middle click or space key
+    if (e.button === 1 || (e.button === 0 && e.spaceKey)) {
+      setIsTablePanning(true);
+      tablePanStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        startPanX: tablePanOffset.x,
+        startPanY: tablePanOffset.y,
+      };
+      return;
+    }
+
     // Eyedropper mode sampling
     if (isEyedropperActive) {
       const coords = getTableWorldCoords(e.clientX, e.clientY);
@@ -1782,6 +1973,20 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   }, [isDraggingFabric, tableZoom, fabricConfig.widthInches, fabricConfig.lengthInches, fabricConfig.scalePxPerInch, TABLE_WIDTH, TABLE_HEIGHT, TABLE_PADDING_X, TABLE_PADDING_Y_TOP, TABLE_PADDING_Y_BOTTOM]);
 
   const handleTableMouseMove = (e) => {
+    // Panning table with mouse (middle click or space+left click)
+    if (isTablePanning) {
+      const minZ = getMinZoom();
+      if (tableZoom > minZ + 0.005) {
+        const dx = e.clientX - tablePanStartRef.current.clientX;
+        const dy = e.clientY - tablePanStartRef.current.clientY;
+        setTablePanOffset({
+          x: Math.round(tablePanStartRef.current.startPanX + dx),
+          y: Math.round(tablePanStartRef.current.startPanY + dy),
+        });
+      }
+      return;
+    }
+
     const coords = getTableWorldCoords(e.clientX, e.clientY);
 
     // Freehand pen drawing
@@ -1858,6 +2063,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   };
 
   const handleTableMouseUp = () => {
+    setIsTablePanning(false);
     setIsDraggingFabric(false);
     setIsDraggingPattern(false);
     setIsResizingPattern(false);
@@ -1870,17 +2076,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     }
   };
 
-  // Stylus/Finger Pen Event Handlers & Pinch-Zoom
+  // Stylus/Finger Pen Event Handlers (Pinch zoom & pan are handled by dedicated container listener)
   const handleTableTouchStart = (e) => {
-    // Multi-touch: Pinch zoom (stationary table)
-    if (e.touches && e.touches.length === 2) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const initialDistance = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
-      twoFingerStartRef.current = {
-        initialDistance,
-        initialZoom: tableZoom,
-      };
+    if (e.touches && e.touches.length >= 2) {
       if (currentPenStroke) {
         setCurrentPenStroke(null);
       }
@@ -1915,16 +2113,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   };
 
   const handleTableTouchMove = (e) => {
-    // Multi-touch: Pinch zoom handling
-    if (e.touches && e.touches.length === 2 && twoFingerStartRef.current) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const currentDistance = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
-      const scale = currentDistance / (twoFingerStartRef.current.initialDistance || 1);
-      const newZoom = Math.max(0.35, Math.min(2.2, Math.round(twoFingerStartRef.current.initialZoom * scale * 100) / 100));
-      setTableZoom(newZoom);
-      return;
-    }
+    if (e.touches && e.touches.length >= 2) return;
 
     if (e.touches && e.touches.length === 1 && currentPenStroke) {
       const touch = e.touches[0];
@@ -1937,10 +2126,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     }
   };
 
-  const handleTableTouchEnd = (e) => {
-    if (twoFingerStartRef.current && (!e.touches || e.touches.length < 2)) {
-      twoFingerStartRef.current = null;
-    }
+  const handleTableTouchEnd = () => {
     if (currentPenStroke) {
       pushState('Pen Handwriting Note');
       setHandwritingStrokes((prev) => [...prev, currentPenStroke]);
@@ -1979,7 +2165,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       {/* 1. TOP CUTTING TABLE MASTER CONTROL BAR                                 */}
       {/* ======================================================================= */}
       <div className="h-12 bg-[#10131a] border-b border-slate-800/90 px-3 sm:px-4 flex items-center justify-between z-30 shrink-0">
-        {/* Left: Icon Badge & Undo/Redo Controls (Restored per user request) */}
+        {/* Left: Icon Badge (Global Undo/Redo/Layers are in top workspace header) */}
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold" title="Cutting Table Active">
@@ -1987,40 +2173,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
             </div>
             <span className="text-xs font-bold text-slate-200 hidden sm:inline">Cutting Table</span>
           </div>
-
-          {/* Undo / Redo in Cutting Table Header */}
-          <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800">
-            <button
-              onClick={handleUndo}
-              disabled={history.length === 0}
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                history.length > 0
-                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
-                  : 'text-slate-600 cursor-not-allowed'
-              }`}
-              title="Undo recent action on Cutting Table (Ctrl+Z)"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              <span className="text-[11px] hidden md:inline">Undo</span>
-            </button>
-
-            <button
-              onClick={handleRedo}
-              disabled={redoStack.length === 0}
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                redoStack.length > 0
-                  ? 'text-slate-200 hover:text-white hover:bg-slate-800'
-                  : 'text-slate-600 cursor-not-allowed'
-              }`}
-              title="Redo recent action on Cutting Table (Ctrl+Y)"
-            >
-              <Redo2 className="w-3.5 h-3.5" />
-              <span className="text-[11px] hidden md:inline">Redo</span>
-            </button>
-          </div>
         </div>
 
-        {/* Center: Scissors, Pen, and Move Tool */}
+        {/* Center: Scissors, Pen, Move, and Measure Tools */}
         <div className="flex items-center gap-1 bg-[#090b10] p-1 rounded-xl border border-slate-800 shadow-inner">
           {/* Scissors Tool */}
           <button
@@ -2050,6 +2205,20 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
             <span>Pen</span>
           </button>
 
+          {/* Tape Measure Tool */}
+          <button
+            onClick={() => handleToolSelect('tape_measure')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeTool === 'tape_measure'
+                ? 'bg-amber-500 text-slate-950 shadow-gold-sm'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+            }`}
+            title={activeTool === 'tape_measure' ? 'Click to unselect Tape Measure' : 'Tape Measure: Measure distances on fabric and cutting table (10s auto-dismiss or click to clear)'}
+          >
+            <Ruler className="w-3.5 h-3.5" />
+            <span>Measure</span>
+          </button>
+
           {/* Movable Tool (Toggle button: ONLY when active can fabric be moved) */}
           <button
             onClick={() => handleToolSelect('move')}
@@ -2072,43 +2241,39 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
           </button>
         </div>
 
-        {/* Right: Layers Section Button, Manual Save to Gallery Button & View Controls */}
-        <div className="flex items-center gap-2">
-          {/* Layers Section Button (Restored per user request) */}
+        {/* Right: Manual Save to Gallery Button & View Controls */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Layers & Tools Drawer Trigger */}
           <button
-            onClick={() => setShowLayerSection((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-              showLayerSection
-                ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
-                : 'bg-[#181b24] hover:bg-[#222632] border-slate-700 text-slate-300 hover:text-white'
-            }`}
-            title="Toggle Cutting Table Layers Section (Flat Layers, Folding, Cutting)"
+            onClick={() => {
+              setActiveDrawerTab('layers');
+              setShowLayerSection(true);
+            }}
+            className="px-2.5 py-1.5 rounded-xl bg-[#181b24] hover:bg-[#222632] border border-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+            title="Open Cutting Table Layers & Tools Drawer"
           >
             <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-xs">Layers</span>
-            <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold flex items-center justify-center">
-              {(fabricConfig ? 1 : 0) + cuttingSheets.length + tracedPatterns.length + cutOutPieces.length + handwritingStrokes.length}
-            </span>
+            <span className="hidden sm:inline">Drawer</span>
           </button>
 
           {/* Manual Save to Gallery at will */}
           <button
             onClick={() => handleManualSaveToGallery()}
-            className="px-2.5 py-1.5 rounded-xl bg-[#181b24] hover:bg-[#222632] border border-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+            className="px-2.5 py-1.5 rounded-xl bg-[#181b24] hover:bg-[#222632] border border-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0"
             title="Save selected piece or project to Project Gallery at will"
           >
             <Save className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Save to Gallery</span>
+            <span className="hidden md:inline">Save</span>
           </button>
 
           {/* Return to Drafting Board */}
           {onNavigateToDrafting && (
             <button
               onClick={onNavigateToDrafting}
-              className="px-2 py-1.5 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 text-xs font-medium flex items-center gap-1 transition-all"
+              className="px-2 py-1.5 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 text-xs font-medium flex items-center gap-1 transition-all shrink-0"
               title="Return to Pattern Drafting Board"
             >
-              <span className="hidden md:inline">Drafting</span>
+              <span className="hidden lg:inline">Drafting</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
@@ -2118,7 +2283,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       {/* ======================================================================= */}
       {/* 2. SUB-TOOLBAR: Fabric Management, Zoom & Scissors Color Selection      */}
       {/* ======================================================================= */}
-      <div className="h-10 bg-[#13161f] border-b border-slate-800/70 px-3 sm:px-4 flex items-center justify-between text-xs z-20 shrink-0">
+      <div className="min-h-10 py-1 bg-[#13161f] border-b border-slate-800/70 px-3 sm:px-4 flex items-center justify-between gap-3 text-xs z-20 shrink-0 overflow-x-auto select-none no-scrollbar">
         {/* Left: Fabric Upload & Expand Yardage/Width (Rule 5) */}
         <div className="flex items-center gap-2">
           {/* Upload Flat Fabric */}
@@ -2523,12 +2688,13 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
             </div>
           )}
 
-          {/* Freehand Zoom in/out buttons & Fit */}
+          {/* Freehand Zoom in/out buttons & Fit (Enforces MIN_ZOOM clamp & auto pan reset at baseline) */}
           <div className="flex items-center gap-1 bg-[#090b10] border border-slate-800 px-1 py-0.5 rounded-lg">
             <button
-              onClick={() => setTableZoom((z) => Math.max(0.2, Math.round((z - 0.1) * 10) / 10))}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
-              title="Zoom Out"
+              onClick={() => applyTableZoom((z) => z - 0.1)}
+              disabled={tableZoom <= getMinZoom() + 0.005}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Zoom Out (Clamped to Baseline)"
             >
               <ZoomOut className="w-3 h-3" />
             </button>
@@ -2536,8 +2702,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
               {Math.round(tableZoom * 100)}%
             </span>
             <button
-              onClick={() => setTableZoom((z) => Math.min(3.5, Math.round((z + 0.1) * 10) / 10))}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
+              onClick={() => applyTableZoom((z) => z + 0.1)}
+              disabled={tableZoom >= 2.5}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
               title="Zoom In"
             >
               <ZoomIn className="w-3 h-3" />
@@ -2554,11 +2721,11 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       </div>
 
       {/* ======================================================================= */}
-      {/* 3. MAIN WORKSPACE: INDUSTRIAL CUTTING TABLE (Stationary & Centered)     */}
+      {/* 3. MAIN WORKSPACE: INDUSTRIAL CUTTING TABLE (True Full-Screen Canvas)   */}
       {/* ======================================================================= */}
       <div
         ref={containerRef}
-        className={`flex-1 w-full h-full relative overflow-auto bg-[#07090e] flex items-center justify-center p-6 ${
+        className={`flex-1 w-full h-full relative overflow-hidden bg-[#07090e] flex items-center justify-center p-0 ${
           activeTool === 'pen' ? 'cursor-crosshair' : 'cursor-default'
         }`}
         onMouseDown={handleTableMouseDown}
@@ -2573,7 +2740,7 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
           ref={tableBenchRef}
           className="relative transition-transform duration-75 ease-out flex-shrink-0"
           style={{
-            transform: `scale(${tableZoom})`,
+            transform: `translate(${tablePanOffset.x}px, ${tablePanOffset.y}px) scale(${tableZoom})`,
             transformOrigin: 'center center',
             width: `${TABLE_WIDTH}px`,
             height: `${TABLE_HEIGHT}px`,
@@ -3470,32 +3637,44 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={handleUndo}
-                    disabled={history.length === 0}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
-                    title="Undo recent action"
-                  >
-                    <Undo2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={handleRedo}
-                    disabled={redoStack.length === 0}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
-                    title="Redo action"
-                  >
-                    <Redo2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
                     onClick={() => setShowLayerSection(false)}
-                    className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white ml-1"
+                    className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
-              {/* Flat Layer List (No Sub-Layers) */}
-              <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto pr-1">
+              {/* Drawer Tabs */}
+              <div className="flex items-center gap-1.5 mb-4 bg-[#090b10] p-1 rounded-xl border border-slate-800">
+                <button
+                  onClick={() => setActiveDrawerTab('layers')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    activeDrawerTab === 'layers'
+                      ? 'bg-amber-500 text-slate-950 shadow-gold-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Layers & Sheets</span>
+                </button>
+                <button
+                  onClick={() => setActiveDrawerTab('tools')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    activeDrawerTab === 'tools'
+                      ? 'bg-amber-500 text-slate-950 shadow-gold-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Cutting Tools & Fabric</span>
+                </button>
+              </div>
+
+              {activeDrawerTab === 'layers' && (
+                <>
+                  {/* Flat Layer List (No Sub-Layers) */}
+                  <div className="space-y-2 max-h-[calc(100vh-250px)] overflow-y-auto pr-1">
                 {/* 1. Fabric Bolt Layer */}
                 <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700 p-3 rounded-xl flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2.5">
@@ -3888,7 +4067,261 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                   </div>
                 )}
               </div>
+            </>
+          )}
+
+          {activeDrawerTab === 'tools' && (
+            <div className="space-y-4 max-h-[calc(100vh-210px)] overflow-y-auto pr-1">
+              {/* 1. Fabric Selection & Visibility */}
+              <div className="bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-2">Fabric Bolt</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-300">Fabric Preset:</span>
+                    <div className="flex items-center gap-1 bg-[#0d1016] border border-slate-800 px-2 py-1 rounded-lg">
+                      <Palette className="w-3 h-3 text-slate-400" />
+                      <select
+                        value={fabricConfig.presetId}
+                        onChange={(e) => {
+                          const p = FLAT_FABRIC_PRESETS.find((fp) => fp.id === e.target.value);
+                          if (p) handleSelectPresetFabric(p);
+                        }}
+                        className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer max-w-[150px] truncate"
+                      >
+                        {FLAT_FABRIC_PRESETS.map((fp) => (
+                          <option key={fp.id} value={fp.id} className="bg-slate-900 text-slate-200">
+                            {fp.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 font-bold flex items-center justify-center gap-1.5 text-xs transition-all"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload Fabric</span>
+                    </button>
+                    <button
+                      onClick={() => setFabricConfig((p) => ({ ...p, visible: !p.visible }))}
+                      className={`px-3 py-1.5 rounded-lg border font-bold text-xs flex items-center gap-1.5 transition-all ${
+                        fabricConfig.visible
+                          ? 'bg-[#0d1016] text-slate-300 border-slate-800'
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                      }`}
+                    >
+                      {fabricConfig.visible ? <Eye className="w-3.5 h-3.5 text-amber-400" /> : <EyeOff className="w-3.5 h-3.5 text-emerald-400" />}
+                      <span>{fabricConfig.visible ? 'Hide' : 'Show'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Fabric Adjuster */}
+              <div className="bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-2">Fabric Dimensions</span>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-slate-400">Width:</span>
+                      <span className="text-amber-400 font-mono font-bold">{fabricConfig.widthInches}"</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleAdjustFabricWidth(-2)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+                      >
+                        -2"
+                      </button>
+                      <input
+                        type="range"
+                        min="36"
+                        max="72"
+                        step="2"
+                        value={fabricConfig.widthInches}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setFabricConfig((p) => ({ ...p, widthInches: val }));
+                        }}
+                        className="flex-1 accent-amber-500 cursor-pointer"
+                      />
+                      <button
+                        onClick={() => handleAdjustFabricWidth(2)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-400"
+                      >
+                        +2"
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-slate-400">Length:</span>
+                      <span className="text-emerald-400 font-mono font-bold">
+                        {(fabricConfig.lengthInches / 36).toFixed(1)} Yds ({fabricConfig.lengthInches}")
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleAdjustFabricLength(-18)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+                      >
+                        -½ Yd
+                      </button>
+                      <input
+                        type="range"
+                        min="36"
+                        max="360"
+                        step="18"
+                        value={fabricConfig.lengthInches}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setFabricConfig((p) => ({ ...p, lengthInches: val }));
+                        }}
+                        className="flex-1 accent-amber-500 cursor-pointer"
+                      />
+                      <button
+                        onClick={() => handleAdjustFabricLength(18)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300"
+                      >
+                        +½ Yd
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Shift Fabric Nudge Controls */}
+              <div className="bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-2">Shift Fabric Position</span>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => shiftFabricOnTable('left', 20)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold"
+                    title="Shift Left"
+                  >
+                    ◀ Left
+                  </button>
+                  <button
+                    onClick={() => shiftFabricOnTable('up', 20)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold"
+                    title="Shift Up"
+                  >
+                    ▲ Up
+                  </button>
+                  <button
+                    onClick={() => shiftFabricOnTable('down', 20)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold"
+                    title="Shift Down"
+                  >
+                    ▼ Down
+                  </button>
+                  <button
+                    onClick={() => shiftFabricOnTable('right', 20)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold"
+                    title="Shift Right"
+                  >
+                    ▶ Right
+                  </button>
+                </div>
+              </div>
+
+              {/* 4. Selected Pattern Controls */}
+              {activeSelectedPattern && (
+                <div className="bg-slate-900/80 border border-cyan-500/40 p-3.5 rounded-2xl">
+                  <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider block mb-2">
+                    Selected: {activeSelectedPattern.name}
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleCopyPatternToFabric(activeSelectedPattern)}
+                      className="py-1.5 px-2 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center justify-center gap-1.5"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Copy to Fabric</span>
+                    </button>
+                    <button
+                      onClick={() => handleToggleUnfoldPattern(activeSelectedPattern.id)}
+                      className={`py-1.5 px-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 border transition-all ${
+                        activeSelectedPattern.isUnfolded
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                          : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      }`}
+                    >
+                      <FlipHorizontal className="w-3.5 h-3.5" />
+                      <span>{activeSelectedPattern.isUnfolded ? 'Fold' : 'Mirror / Unfold'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Scissors Cutting Color & Action */}
+              <div className="bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-2">Scissors Cut Color</span>
+                <div className="flex items-center gap-2 mb-3">
+                  {availableSolidColors.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => {
+                        setSelectedCutColor(color);
+                        setTargetCutColor(color);
+                      }}
+                      style={{ backgroundColor: color }}
+                      className={`w-6 h-6 rounded-full border transition-all ${
+                        (selectedCutColor === color || targetCutColor === color)
+                          ? 'ring-2 ring-amber-400 scale-110 border-white shadow'
+                          : 'border-slate-600 opacity-75 hover:opacity-100'
+                      }`}
+                    />
+                  ))}
+                </div>
+                {activeSelectedPattern && (
+                  <button
+                    onClick={() => handleExecuteCutOut(activeSelectedPattern)}
+                    className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-gold-sm"
+                  >
+                    <Scissors className="w-4 h-4" />
+                    <span>Cut Selected Bodice</span>
+                  </button>
+                )}
+              </div>
+
+              {/* 6. Pen Ink Selection */}
+              <div className="bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-2">Pen Tool Ink</span>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setPenInkMode('auto')}
+                    className={`py-1.5 rounded-lg text-xs font-bold ${
+                      penInkMode === 'auto' ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    onClick={() => setPenInkMode('black')}
+                    className={`py-1.5 rounded-lg text-xs font-bold ${
+                      penInkMode === 'black' ? 'bg-slate-950 text-white border border-slate-600' : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    Black
+                  </button>
+                  <button
+                    onClick={() => setPenInkMode('white')}
+                    className={`py-1.5 rounded-lg text-xs font-bold ${
+                      penInkMode === 'white' ? 'bg-white text-slate-950' : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    White
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
+        </div>
 
             <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
               <span className="text-slate-400 text-[11px]">All actions recorded in Undo history</span>

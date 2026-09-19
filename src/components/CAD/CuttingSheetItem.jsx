@@ -134,6 +134,7 @@ export default function CuttingSheetItem({
 
   // Directional nudge handler (20px per step)
   const handleNudge = (dx, dy) => {
+    if (sheet.locked) return;
     emitUpdate({
       x: sheet.x + dx,
       y: sheet.y + dy,
@@ -219,14 +220,17 @@ export default function CuttingSheetItem({
     emitUpdate({ hasSeamAllowance: true, seamAllowanceInches: allowanceInches });
   };
 
-  // Change sheet color & ensure chalk contrasts visibly
+  // Change sheet color & ensure independent toggle (does NOT mutate chalk color)
   const handleSelectSheetColor = (hex) => {
     setShowColorPicker(false);
     emitUpdate({ color: hex });
-    // If user sets a white/cream sheet and current chalk is white, switch chalk to high-visibility French Blue!
-    if ((hex === '#ffffff' || hex === '#fefce8' || hex === '#fef3c7') && activeChalkColor === '#ffffff') {
-      onSetChalkColor?.('#0284c7');
-    }
+  };
+
+  // Change chalk color & ensure independent toggle (does NOT mutate sheet color)
+  const handleSelectChalkColor = (hex) => {
+    setShowChalkPicker(false);
+    emitUpdate({ chalkColor: hex });
+    onSetChalkColor?.(hex);
   };
 
   const screenX = sheet.x * zoom + panOffset.x;
@@ -285,18 +289,104 @@ export default function CuttingSheetItem({
             </span>
           </div>
 
-          {/* Visual Mini Previews: Sheet Color & Chalk Color */}
-          <div className="flex items-center gap-1 px-1 py-0.5 bg-slate-850 rounded-lg border border-slate-700/60">
-            <div
-              className="w-2.5 h-2.5 rounded-full border border-white/60 shadow-xs"
-              style={{ backgroundColor: sheet.color || '#ffffff' }}
-              title={`Sheet Material: ${sheet.color || '#ffffff'}`}
-            />
-            <div
-              className="w-2.5 h-2.5 rounded-full border border-white/80 shadow-xs"
-              style={{ backgroundColor: activeChalkColor }}
-              title={`Active Chalk Color: ${activeChalkColor}`}
-            />
+          {/* Visual Mini Previews & Direct Inline Toggles: Sheet Color & Chalk Color */}
+          <div className="flex items-center gap-1.5 px-1.5 py-0.5 bg-slate-900/90 rounded-lg border border-slate-700/80 relative">
+            {/* Direct Sheet Color Button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowColorPicker((prev) => !prev);
+                setShowChalkPicker(false);
+              }}
+              className="flex items-center gap-1 hover:opacity-80 transition-opacity p-0.5 rounded cursor-pointer"
+              title="Toggle Sheet Color (Click to change)"
+            >
+              <div
+                className="w-3.5 h-3.5 rounded-full border border-white/70 shadow-xs shrink-0 ring-1 ring-black/40"
+                style={{ backgroundColor: sheet.color || '#ffffff' }}
+              />
+              <span className="text-[9px] font-bold text-slate-300">Sheet</span>
+            </button>
+
+            <span className="text-slate-600 text-[10px]">•</span>
+
+            {/* Direct Chalk Color Button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowChalkPicker((prev) => !prev);
+                setShowColorPicker(false);
+              }}
+              className="flex items-center gap-1 hover:opacity-80 transition-opacity p-0.5 rounded cursor-pointer"
+              title="Toggle Chalk Color (Click to change)"
+            >
+              <div
+                className="w-3.5 h-3.5 rounded-full border border-white/90 shadow-xs shrink-0 ring-1 ring-black/40"
+                style={{ backgroundColor: sheet.chalkColor || activeChalkColor || '#facc15' }}
+              />
+              <span className="text-[9px] font-bold text-amber-300">Chalk</span>
+            </button>
+
+            {/* Inline Sheet Color Picker Popover from Collapsed Badge */}
+            {showColorPicker && (
+              <div
+                className="absolute top-8 left-0 z-50 p-2 bg-slate-900/98 backdrop-blur-md rounded-xl border border-amber-500/50 shadow-2xl w-48 flex flex-col gap-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">
+                  Sheet Color (Independent):
+                </span>
+                <div className="grid grid-cols-1 gap-1 max-h-48 overflow-y-auto">
+                  {FABRIC_COLOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value}
+                      onClick={() => handleSelectSheetColor(preset.value)}
+                      className={`flex items-center gap-2 px-2 py-1 rounded-lg text-left text-[11px] font-medium transition-colors ${
+                        sheet.color === preset.value ? 'bg-amber-500/20 text-amber-300 font-bold' : 'hover:bg-slate-800 text-slate-200'
+                      }`}
+                    >
+                      <div
+                        className="w-3.5 h-3.5 rounded-full border border-slate-600 shrink-0"
+                        style={{ backgroundColor: preset.value }}
+                      />
+                      <span className="truncate">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inline Chalk Color Picker Popover from Collapsed Badge */}
+            {showChalkPicker && (
+              <div
+                className="absolute top-8 left-0 z-50 p-2 bg-slate-900/98 backdrop-blur-md rounded-xl border border-amber-500/50 shadow-2xl w-52 flex flex-col gap-1.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">
+                  Chalk Color (Independent):
+                </span>
+                <div className="grid grid-cols-2 gap-1 max-h-48 overflow-y-auto">
+                  {HIGH_CONTRAST_CHALKS.map((c) => (
+                    <button
+                      key={c.hex}
+                      onClick={() => handleSelectChalkColor(c.hex)}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left text-[10px] font-bold transition-all ${
+                        (sheet.chalkColor || activeChalkColor) === c.hex
+                          ? 'border-amber-400 bg-amber-500/20 text-amber-300'
+                          : 'border-slate-800 hover:bg-slate-800 text-slate-200'
+                      }`}
+                      title={c.desc}
+                    >
+                      <div
+                        className="w-3 h-3 rounded-full border border-white/40 shrink-0"
+                        style={{ backgroundColor: c.hex }}
+                      />
+                      <span className="truncate">{c.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Expand Controls Button */}
@@ -450,24 +540,41 @@ export default function CuttingSheetItem({
             </button>
 
             {showColorPicker && (
-              <div className="absolute top-9 left-0 z-50 p-2.5 bg-slate-900/98 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl w-48 flex flex-col gap-1.5">
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute top-9 left-0 z-50 p-2.5 bg-slate-900/98 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl w-48 flex flex-col gap-1.5"
+              >
                 <span className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">
                   Sheet Fabric / Paper:
                 </span>
                 <div className="grid grid-cols-1 gap-1">
-                  {FABRIC_COLOR_PRESETS.map((preset) => (
-                    <button
-                      key={preset.value}
-                      onClick={() => handleSelectSheetColor(preset.value)}
-                      className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-800 text-left text-[11px] font-medium transition-colors"
-                    >
-                      <div
-                        className="w-3.5 h-3.5 rounded-full border border-slate-600 shrink-0"
-                        style={{ backgroundColor: preset.value }}
-                      />
-                      <span className="text-slate-200">{preset.label}</span>
-                    </button>
-                  ))}
+                  {FABRIC_COLOR_PRESETS.map((preset) => {
+                    const isSelected = (sheet.color || '#ffffff').toLowerCase() === preset.value.toLowerCase();
+                    return (
+                      <button
+                        key={preset.value}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectSheetColor(preset.value);
+                        }}
+                        className={`flex items-center justify-between px-2 py-1 rounded-lg text-left text-[11px] font-medium transition-colors ${
+                          isSelected
+                            ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-400/50'
+                            : 'hover:bg-slate-800 text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-3.5 h-3.5 rounded-full border border-slate-600 shrink-0"
+                            style={{ backgroundColor: preset.value }}
+                          />
+                          <span>{preset.label}</span>
+                        </div>
+                        {isSelected && <span className="text-[10px] text-amber-400">✓</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -492,32 +599,42 @@ export default function CuttingSheetItem({
             </button>
 
             {showChalkPicker && (
-              <div className="absolute top-9 left-0 z-50 p-2.5 bg-slate-900/98 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl w-56 flex flex-col gap-2">
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute top-9 left-0 z-50 p-2.5 bg-slate-900/98 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl w-56 flex flex-col gap-2"
+              >
                 <span className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">
                   Tailor's Chalk Color:
                 </span>
                 <div className="grid grid-cols-2 gap-1">
-                  {HIGH_CONTRAST_CHALKS.map((c) => (
-                    <button
-                      key={c.hex}
-                      onClick={() => {
-                        onSetChalkColor?.(c.hex);
-                        setShowChalkPicker(false);
-                      }}
-                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left text-[10px] font-bold transition-all ${
-                        activeChalkColor === c.hex
-                          ? 'border-amber-400 bg-amber-500/20 text-amber-300'
-                          : 'border-slate-800 hover:bg-slate-800 text-slate-200'
-                      }`}
-                      title={c.desc}
-                    >
-                      <div
-                        className="w-3.5 h-3.5 rounded-full border border-white/40 shrink-0"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      <span className="truncate">{c.name}</span>
-                    </button>
-                  ))}
+                  {HIGH_CONTRAST_CHALKS.map((c) => {
+                    const isSelected = activeChalkColor.toLowerCase() === c.hex.toLowerCase();
+                    return (
+                      <button
+                        key={c.hex}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectChalkColor(c.hex);
+                        }}
+                        className={`flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg border text-left text-[10px] font-bold transition-all ${
+                          isSelected
+                            ? 'border-amber-400 bg-amber-500/20 text-amber-300'
+                            : 'border-slate-800 hover:bg-slate-800 text-slate-200'
+                        }`}
+                        title={c.desc}
+                      >
+                        <div className="flex items-center gap-1.5 truncate">
+                          <div
+                            className="w-3.5 h-3.5 rounded-full border border-white/40 shrink-0"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          <span className="truncate">{c.name}</span>
+                        </div>
+                        {isSelected && <span className="text-[9px] text-amber-400 shrink-0">✓</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

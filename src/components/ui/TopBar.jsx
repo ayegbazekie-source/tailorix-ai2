@@ -17,6 +17,8 @@ import {
   Check,
   ExternalLink,
   HelpCircle,
+  Menu,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -26,8 +28,10 @@ export function TopBar() {
   const { user } = useAuth();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showDraftingMenu, setShowDraftingMenu] = useState(false);
+  const [showMobileNav, setShowMobileNav] = useState(false);
   const profileRef = useRef(null);
   const draftingRef = useRef(null);
+  const mobileNavRef = useRef(null);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -37,6 +41,9 @@ export function TopBar() {
       }
       if (draftingRef.current && !draftingRef.current.contains(e.target)) {
         setShowDraftingMenu(false);
+      }
+      if (mobileNavRef.current && !mobileNavRef.current.contains(e.target) && !e.target.closest('#mobile-nav-trigger-btn')) {
+        setShowMobileNav(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -240,7 +247,109 @@ export function TopBar() {
             </div>
           )}
         </div>
+
+        {/* Mobile Navigation Menu Button */}
+        <button
+          id="mobile-nav-trigger-btn"
+          onClick={() => setShowMobileNav(!showMobileNav)}
+          className="md:hidden flex items-center justify-center w-8 h-8 rounded-xl bg-[#18191c] hover:bg-[#222428] border border-[#2c2e33] text-[#EDEDF0] transition-colors"
+          aria-label="Toggle App Navigation"
+        >
+          {showMobileNav ? <X className="w-4 h-4 text-[#C5A059]" /> : <Menu className="w-4 h-4 text-[#EDEDF0]" />}
+        </button>
       </div>
+
+      {/* Mobile Navigation Drawer */}
+      {showMobileNav && (
+        <div
+          ref={mobileNavRef}
+          className="md:hidden absolute top-13 left-0 right-0 bg-[#141517] border-b border-[#2D2E32] p-4 shadow-2xl z-50 flex flex-col gap-2 animate-in fade-in duration-150"
+        >
+          <div className="text-[11px] font-mono uppercase text-[#C5A059] tracking-wider mb-1">
+            Workspaces & Modules
+          </div>
+          <button
+            onClick={() => {
+              navigate('/cad');
+              setShowMobileNav(false);
+            }}
+            className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-left transition-all ${
+              location.pathname === '/cad'
+                ? 'bg-[#C5A059]/15 text-[#E5C07B] border border-[#C5A059]/40'
+                : 'bg-[#1a1c20] text-[#D2D3D8] hover:bg-[#24262b]'
+            }`}
+          >
+            <PenTool className="w-4 h-4 text-[#C5A059]" />
+            <div className="flex flex-col">
+              <span>Pattern Drafting Board</span>
+              <span className="text-[10px] text-[#8A8B93] font-normal">Vector CAD canvas, bodice sheets & tools</span>
+            </div>
+          </button>
+
+          <button
+            onClick={() => {
+              navigate('/studio');
+              setShowMobileNav(false);
+            }}
+            className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-left transition-all ${
+              location.pathname === '/studio'
+                ? 'bg-[#C5A059]/15 text-[#E5C07B] border border-[#C5A059]/40'
+                : 'bg-[#1a1c20] text-[#D2D3D8] hover:bg-[#24262b]'
+            }`}
+          >
+            <Scissors className="w-4 h-4 text-emerald-400" />
+            <div className="flex flex-col">
+              <span>Cutting Table</span>
+              <span className="text-[10px] text-[#8A8B93] font-normal">Industrial green rack, fabric nesting & cutting</span>
+            </div>
+          </button>
+
+          <div className="h-px bg-[#26282d] my-1" />
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => {
+                navigate('/deconstruct');
+                setShowMobileNav(false);
+              }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1a1c20] hover:bg-[#24262b] text-xs font-medium text-[#D2D3D8]"
+            >
+              <ScanLine className="w-3.5 h-3.5 text-[#C5A059]" />
+              <span>Photo to Pattern</span>
+            </button>
+            <button
+              onClick={() => {
+                navigate('/templates');
+                setShowMobileNav(false);
+              }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1a1c20] hover:bg-[#24262b] text-xs font-medium text-[#D2D3D8]"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-[#8A8B93]" />
+              <span>Ready Outlines</span>
+            </button>
+            <button
+              onClick={() => {
+                navigate('/projects');
+                setShowMobileNav(false);
+              }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1a1c20] hover:bg-[#24262b] text-xs font-medium text-[#D2D3D8]"
+            >
+              <Folder className="w-3.5 h-3.5 text-[#8A8B93]" />
+              <span>Projects Gallery</span>
+            </button>
+            <button
+              onClick={() => {
+                navigate('/tutor');
+                setShowMobileNav(false);
+              }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1a1c20] hover:bg-[#24262b] text-xs font-medium text-[#D2D3D8]"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#C5A059]" />
+              <span>AI Atelier</span>
+            </button>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

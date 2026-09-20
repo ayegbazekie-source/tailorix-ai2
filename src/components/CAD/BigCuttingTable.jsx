@@ -550,34 +550,6 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     }
   }, [selectedCuttingSheetId]);
 
-  // Expose imperative controls to parent workspace header
-  useImperativeHandle(ref, () => ({
-    handleUndo,
-    handleRedo,
-    toggleLayers: () => setShowLayerSection((prev) => !prev),
-    toggleMoveMode,
-    toggleFabricVisibility,
-    importSheet: (sheetId) => handleImportSheetToTable(sheetId),
-    importLayer: (layer) => handleTraceBodiceOntoFabric(layer),
-    canUndo: history.length > 0,
-    canRedo: redoStack.length > 0,
-    showLayerSection,
-    isMoveEnabled: activeTool === 'move' || isFabricMoveEnabled,
-    isFabricVisible: fabricConfig.visible,
-  }), [
-    handleUndo,
-    handleRedo,
-    toggleMoveMode,
-    toggleFabricVisibility,
-    handleImportSheetToTable,
-    history.length,
-    redoStack.length,
-    showLayerSection,
-    activeTool,
-    isFabricMoveEnabled,
-    fabricConfig.visible,
-  ]);
-
   // Sync undo/redo, move toggle, and layers availability with parent workspace
   useEffect(() => {
     onHistoryChange?.({
@@ -586,6 +558,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       showLayers: showLayerSection,
       isMoveEnabled: activeTool === 'move' || isFabricMoveEnabled,
       isFabricVisible: fabricConfig.visible,
+      tableZoom,
+      fabricConfig,
+      showFabricAdjuster,
     });
   }, [
     history.length,
@@ -593,7 +568,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
     showLayerSection,
     activeTool,
     isFabricMoveEnabled,
-    fabricConfig.visible,
+    fabricConfig,
+    tableZoom,
+    showFabricAdjuster,
     onHistoryChange,
   ]);
 
@@ -695,21 +672,47 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
   // -------------------------------------------------------------------------
   // 10. Center and Fit Table Inside Viewport (Baseline Zoom & Minimum Clamp)
-  // Mobile: Clamped to 100% (1.0) baseline zoom
-  // Desktop: Clamped to desktop full-rack layout baseline scale
+  // Mobile: Clamped to 50% (0.5) baseline zoom
+  // Desktop: Clamped to desktop full-rack layout baseline scale (min 0.5)
   // Panning allowed ONLY when zoomed beyond baseline.
   // -------------------------------------------------------------------------
+  const [effectiveRackSize, setEffectiveRackSize] = useState({ width: TABLE_WIDTH, height: TABLE_HEIGHT });
+
   const getMinZoom = useCallback(() => {
-    if (!containerRef.current) return 1.0;
-    const { clientWidth, clientHeight } = containerRef.current;
-    if (clientWidth <= 0 || clientHeight <= 0) return 1.0;
-    if (clientWidth < 768) {
-      return 1.0;
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return 0.5; // Requirement 10: mobile baseline/minimum is 50% = 0.5
     }
-    const scaleX = clientWidth / TABLE_WIDTH;
-    const scaleY = clientHeight / TABLE_HEIGHT;
+    if (!containerRef.current) return 0.5;
+    const { clientWidth, clientHeight } = containerRef.current;
+    if (clientWidth <= 0 || clientHeight <= 0) return 0.5;
+    if (clientWidth < 768) {
+      return 0.5;
+    }
+    const scaleX = (clientWidth - 48) / TABLE_WIDTH;
+    const scaleY = (clientHeight - 88) / TABLE_HEIGHT;
     const desktopBaseline = Math.round(Math.min(scaleX, scaleY) * 100) / 100;
-    return Math.max(0.2, Math.min(1.0, desktopBaseline));
+    return Math.max(0.5, Math.min(1.0, desktopBaseline));
+  }, [TABLE_WIDTH, TABLE_HEIGHT]);
+
+  const updateEffectiveRackSize = useCallback(() => {
+    const isMobile = (containerRef.current?.clientWidth || window.innerWidth) < 768;
+    if (!isMobile) {
+      setEffectiveRackSize({ width: TABLE_WIDTH, height: TABLE_HEIGHT });
+      return;
+    }
+    const availW = Math.max(200, (containerRef.current?.clientWidth || window.innerWidth) - 24);
+    const availH = Math.max(150, (containerRef.current?.clientHeight || (window.innerHeight - 60)) - 24);
+    const rackAspect = TABLE_WIDTH / TABLE_HEIGHT; // 1.8333
+    let fitW = availW;
+    let fitH = fitW / rackAspect;
+    if (fitH > availH) {
+      fitH = availH;
+      fitW = fitH * rackAspect;
+    }
+    // At baseline scale 0.5 (50%), rendered size = (fitW / 0.5) * 0.5 = fitW, fitH
+    const unscaledW = Math.round(fitW / 0.5);
+    const unscaledH = Math.round(fitH / 0.5);
+    setEffectiveRackSize({ width: unscaledW, height: unscaledH });
   }, [TABLE_WIDTH, TABLE_HEIGHT]);
 
   const applyTableZoom = useCallback((newZoomOrUpdater) => {
@@ -725,14 +728,18 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   }, [getMinZoom]);
 
   const centerAndFitTable = useCallback(() => {
+    updateEffectiveRackSize();
     const minZ = getMinZoom();
     setTableZoom(minZ);
     setTablePanOffset({ x: 0, y: 0 });
     setFabricConfig((prev) => {
-      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, TABLE_WIDTH, TABLE_HEIGHT);
+      const isMobile = (containerRef.current?.clientWidth || window.innerWidth) < 768;
+      const tW = isMobile ? effectiveRackSize.width : TABLE_WIDTH;
+      const tH = isMobile ? effectiveRackSize.height : TABLE_HEIGHT;
+      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, tW, tH);
       return { ...prev, ...geom };
     });
-  }, [getMinZoom, TABLE_WIDTH, TABLE_HEIGHT]);
+  }, [getMinZoom, updateEffectiveRackSize, effectiveRackSize.width, effectiveRackSize.height, TABLE_WIDTH, TABLE_HEIGHT]);
 
   useEffect(() => {
     centerAndFitTable();
@@ -755,6 +762,74 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       window.removeEventListener('resize', handleResize);
     };
   }, [centerAndFitTable]);
+
+  // Touch gesture listener on cutting container for 2-finger pinch-to-zoom & pan
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let touchStartData = null;
+
+    const onTouchStart = (e) => {
+      if (e.touches && e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        touchStartData = {
+          dist: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
+          zoom: tableZoom,
+          midX: (t1.clientX + t2.clientX) / 2,
+          midY: (t1.clientY + t2.clientY) / 2,
+          panX: tablePanOffset.x,
+          panY: tablePanOffset.y,
+        };
+      }
+    };
+
+    const onTouchMove = (e) => {
+      if (e.touches && e.touches.length === 2 && touchStartData) {
+        if (e.cancelable) e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const ratio = dist / (touchStartData.dist || 1);
+        const minZ = getMinZoom();
+        const nextZoom = Math.min(2.5, Math.max(minZ, Math.round(touchStartData.zoom * ratio * 100) / 100));
+
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        const dx = midX - touchStartData.midX;
+        const dy = midY - touchStartData.midY;
+
+        setTableZoom(nextZoom);
+        if (nextZoom <= minZ + 0.005) {
+          setTablePanOffset({ x: 0, y: 0 });
+        } else {
+          setTablePanOffset({
+            x: Math.round(touchStartData.panX + dx),
+            y: Math.round(touchStartData.panY + dy),
+          });
+        }
+      }
+    };
+
+    const onTouchEnd = (e) => {
+      if (!e.touches || e.touches.length < 2) {
+        touchStartData = null;
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [tableZoom, tablePanOffset, getMinZoom]);
 
   // Transform client screen coordinates to table world coordinates
   const getTableWorldCoords = useCallback((clientX, clientY) => {
@@ -2159,12 +2234,72 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       : [activeSelectedPattern.contourColor || '#38bdf8'];
   }, [activeSelectedPattern, analyzeLayerStrokes]);
 
+  // Expose imperative controls to parent workspace header
+  useImperativeHandle(ref, () => ({
+    handleUndo,
+    handleRedo,
+    toggleLayers: () => setShowLayerSection((prev) => !prev),
+    toggleMoveMode,
+    toggleFabricVisibility,
+    importSheet: (sheetId) => handleImportSheetToTable(sheetId),
+    importLayer: (layer) => handleTraceBodiceOntoFabric(layer),
+    canUndo: history.length > 0,
+    canRedo: redoStack.length > 0,
+    showLayerSection,
+    isMoveEnabled: activeTool === 'move' || isFabricMoveEnabled,
+    isFabricVisible: fabricConfig.visible,
+    applyTableZoom,
+    centerAndFitTable,
+    tableZoom,
+    handleAdjustFabricWidth,
+    handleAdjustFabricLength,
+    shiftFabricOnTable,
+    handleSelectPresetFabric,
+    fabricConfig,
+    setFabricConfig,
+    FLAT_FABRIC_PRESETS,
+    handleUploadCustomFabric,
+    handleManualSaveToGallery,
+    availableSolidColors,
+    targetCutColor,
+    setTargetCutColor,
+    handleExecuteCutOut,
+    penInkMode,
+    setPenInkMode,
+    activeTool,
+    setActiveTool,
+    showFabricAdjuster,
+    setShowFabricAdjuster,
+  }), [
+    handleUndo,
+    handleRedo,
+    toggleMoveMode,
+    toggleFabricVisibility,
+    handleImportSheetToTable,
+    handleTraceBodiceOntoFabric,
+    history.length,
+    redoStack.length,
+    showLayerSection,
+    activeTool,
+    isFabricMoveEnabled,
+    fabricConfig,
+    applyTableZoom,
+    centerAndFitTable,
+    tableZoom,
+    shiftFabricOnTable,
+    availableSolidColors,
+    targetCutColor,
+    handleExecuteCutOut,
+    penInkMode,
+    showFabricAdjuster,
+  ]);
+
   return (
     <div className="w-full h-full bg-[#080a0f] text-slate-100 flex flex-col relative overflow-hidden select-none font-sans">
       {/* ======================================================================= */}
-      {/* 1. TOP CUTTING TABLE MASTER CONTROL BAR                                 */}
+      {/* 1. TOP CUTTING TABLE MASTER CONTROL BAR (Desktop only, mobile controlled via Workspace Header) */}
       {/* ======================================================================= */}
-      <div className="h-12 bg-[#10131a] border-b border-slate-800/90 px-3 sm:px-4 flex items-center justify-between z-30 shrink-0">
+      <div className="hidden md:flex h-12 bg-[#10131a] border-b border-slate-800/90 px-3 sm:px-4 items-center justify-between z-30 shrink-0">
         {/* Left: Icon Badge (Global Undo/Redo/Layers are in top workspace header) */}
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
@@ -2243,19 +2378,6 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
 
         {/* Right: Manual Save to Gallery Button & View Controls */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Layers & Tools Drawer Trigger */}
-          <button
-            onClick={() => {
-              setActiveDrawerTab('layers');
-              setShowLayerSection(true);
-            }}
-            className="px-2.5 py-1.5 rounded-xl bg-[#181b24] hover:bg-[#222632] border border-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0"
-            title="Open Cutting Table Layers & Tools Drawer"
-          >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Drawer</span>
-          </button>
-
           {/* Manual Save to Gallery at will */}
           <button
             onClick={() => handleManualSaveToGallery()}
@@ -2281,9 +2403,9 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       </div>
 
       {/* ======================================================================= */}
-      {/* 2. SUB-TOOLBAR: Fabric Management, Zoom & Scissors Color Selection      */}
+      {/* 2. SUB-TOOLBAR: Fabric Management, Zoom & Scissors Color Selection (Desktop) */}
       {/* ======================================================================= */}
-      <div className="min-h-10 py-1 bg-[#13161f] border-b border-slate-800/70 px-3 sm:px-4 flex items-center justify-between gap-3 text-xs z-20 shrink-0 overflow-x-auto select-none no-scrollbar">
+      <div className="hidden md:flex min-h-10 py-1 bg-[#13161f] border-b border-slate-800/70 px-3 sm:px-4 items-center justify-between gap-3 text-xs z-20 shrink-0 overflow-x-auto select-none no-scrollbar">
         {/* Left: Fabric Upload & Expand Yardage/Width (Rule 5) */}
         <div className="flex items-center gap-2">
           {/* Upload Flat Fabric */}
@@ -2720,6 +2842,118 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
         </div>
       </div>
 
+      {/* Mobile Fabric Adjuster (Positioned directly under header, between header and rack) */}
+      {showFabricAdjuster && (
+        <div className="md:hidden relative z-30 w-full max-h-[38vh] overflow-y-auto bg-[#10141e] border-b border-amber-500/80 p-3 text-slate-200 space-y-3 shrink-0">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+            <div className="flex items-center gap-1.5">
+              <Sliders className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-bold text-amber-300 uppercase tracking-wide">Fabric Adjuster</span>
+            </div>
+            <button
+              onClick={() => setShowFabricAdjuster(false)}
+              className="p-1 rounded text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Width Controls */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[11px] font-semibold text-slate-300">
+              <span>Fabric Width:</span>
+              <span className="text-cyan-400 font-mono font-bold">{fabricConfig.widthInches} inches</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleAdjustFabricWidth(-6)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+              >
+                -6"
+              </button>
+              <button
+                onClick={() => handleAdjustFabricWidth(-2)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+              >
+                -2"
+              </button>
+              <input
+                type="range"
+                min="24"
+                max="120"
+                step="2"
+                value={fabricConfig.widthInches}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setFabricConfig((p) => ({ ...p, widthInches: val }));
+                }}
+                className="flex-1 accent-amber-500 cursor-pointer"
+              />
+              <button
+                onClick={() => handleAdjustFabricWidth(2)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-cyan-300"
+              >
+                +2"
+              </button>
+              <button
+                onClick={() => handleAdjustFabricWidth(6)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-cyan-300"
+              >
+                +6"
+              </button>
+            </div>
+          </div>
+
+          {/* Length Controls */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[11px] font-semibold text-slate-300">
+              <span>Fabric Length:</span>
+              <span className="text-amber-400 font-mono font-bold">
+                {fabricConfig.lengthInches} in ({(fabricConfig.lengthInches / 36).toFixed(1)} Yd)
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleAdjustFabricLength(-36)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+              >
+                -1 Yd
+              </button>
+              <button
+                onClick={() => handleAdjustFabricLength(-18)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+              >
+                -½ Yd
+              </button>
+              <input
+                type="range"
+                min="36"
+                max="360"
+                step="6"
+                value={fabricConfig.lengthInches}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setFabricConfig((p) => ({ ...p, lengthInches: val }));
+                }}
+                className="flex-1 accent-amber-500 cursor-pointer"
+              />
+              <button
+                onClick={() => handleAdjustFabricLength(18)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300"
+              >
+                +½ Yd
+              </button>
+              <button
+                onClick={() => handleAdjustFabricLength(36)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300"
+              >
+                +1 Yd
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ======================================================================= */}
       {/* 3. MAIN WORKSPACE: INDUSTRIAL CUTTING TABLE (True Full-Screen Canvas)   */}
       {/* ======================================================================= */}
@@ -2742,8 +2976,8 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
           style={{
             transform: `translate(${tablePanOffset.x}px, ${tablePanOffset.y}px) scale(${tableZoom})`,
             transformOrigin: 'center center',
-            width: `${TABLE_WIDTH}px`,
-            height: `${TABLE_HEIGHT}px`,
+            width: `${effectiveRackSize.width}px`,
+            height: `${effectiveRackSize.height}px`,
           }}
         >
           {/* Physical Cutting Table Bench */}

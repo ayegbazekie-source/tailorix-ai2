@@ -70,6 +70,7 @@ import {
   Minus,
   ChevronUp,
   Save,
+  Shirt,
 } from 'lucide-react';
 
 import AdvancedTailorDrawer from './AdvancedTailorDrawer';
@@ -195,7 +196,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(3);
   const [brushOpacity, setBrushOpacity] = useState(0.85);
-  const [isToolsCollapsed, setIsToolsCollapsed] = useState(false);
+  const [isToolsCollapsed, setIsToolsCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 768
+  );
 
   // -------------------------------------------------------------------------
   // 8-Ruler Vector Overlay & Edge Snapping Toolbox State (Autodesk Sketchbook)
@@ -213,11 +216,34 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [cuttingSheets, setCuttingSheets] = useState([]);
   const [selectedCuttingSheetId, setSelectedCuttingSheetId] = useState(null);
   const [sheetDrawPreview, setSheetDrawPreview] = useState(null); // { startX, startY, currentX, currentY }
+  const [mobileBodiceMenuOpen, setMobileBodiceMenuOpen] = useState(false);
 
   // Advanced Overlay Instruments
   const [symmetryEnabled, setSymmetryEnabled] = useState(false); // Mirror Tool
-  const [symmetryAxisX, setSymmetryAxisX] = useState(500); // Vertical mirror line (Freely Moveable Workspace Axis)
+  const [symmetryAxisX, setSymmetryAxisX] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return Math.round((window.innerWidth / 2 - 40) / 0.5);
+    }
+    return 500;
+  }); // Vertical mirror line (Freely Moveable Workspace Axis)
   const [isDraggingMirrorAxis, setIsDraggingMirrorAxis] = useState(false);
+
+  // Helper to toggle Mirror Tool and guarantee it is centered in visible viewport
+  const handleToggleSymmetry = () => {
+    setSymmetryEnabled((prev) => {
+      const next = !prev;
+      if (next && typeof window !== 'undefined') {
+        const vpW = window.innerWidth;
+        const currentScreenX = symmetryAxisX * zoom + panOffset.x;
+        // If axis is off screen, re-center in current viewport
+        if (currentScreenX < 40 || currentScreenX > vpW - 40) {
+          const centeredCanvasX = Math.round((vpW / 2 - panOffset.x) / zoom);
+          setSymmetryAxisX(centeredCanvasX);
+        }
+      }
+      return next;
+    });
+  };
 
   // Steady Stroke Stabilization Configuration (Autodesk Sketchbook style)
   const STEADY_STROKE_LEVELS = {
@@ -340,8 +366,20 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [currentStroke, setCurrentStroke] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-  const [zoom, setZoom] = useState(1.0);
-  const [panOffset, setPanOffset] = useState({ x: 40, y: 30 });
+  const [zoom, setZoom] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return 0.5;
+    }
+    return 1.0;
+  });
+  const [panOffset, setPanOffset] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      return { x: Math.round(w / 2 - 150), y: Math.round(h / 2 - 180) };
+    }
+    return { x: 40, y: 30 };
+  });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0 });
 
@@ -509,29 +547,80 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     return newLayer;
   };
 
-  // Helper to ensure an active writable layer exists before drawing (creates Layer 1 on blank board, or links to cutting sheet)
+  // Coordinate transformations between Canonical Canvas Space and Sheet-Local Space
+  const canonicalToSheetLocal = (pt, sheet) => {
+    if (!pt || !sheet) return { localX: 0, localY: 0, isInside: false };
+    const effW = sheet.isMirrored ? sheet.width * 2 : sheet.width;
+    const rot = sheet.rotation || 0;
+    const cx = sheet.x + effW / 2;
+    const cy = sheet.y + sheet.height / 2;
+
+    let x = pt.x;
+    let y = pt.y;
+
+    if (rot !== 0) {
+      const rad = (-rot * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const dx = x - cx;
+      const dy = y - cy;
+      x = cx + dx * cos - dy * sin;
+      y = cy + dx * sin + dy * cos;
+    }
+
+    const localX = x - sheet.x;
+    const localY = y - sheet.y;
+    const isInside = localX >= 0 && localX <= effW && localY >= 0 && localY <= sheet.height;
+
+    return { localX, localY, isInside };
+  };
+
+  const sheetLocalToCanonical = (localPt, sheet) => {
+    if (!localPt || !sheet) return { x: 0, y: 0 };
+    const effW = sheet.isMirrored ? sheet.width * 2 : sheet.width;
+    const rot = sheet.rotation || 0;
+    const cx = sheet.x + effW / 2;
+    const cy = sheet.y + sheet.height / 2;
+
+    let x = sheet.x + localPt.x;
+    let y = sheet.y + localPt.y;
+
+    if (rot !== 0) {
+      const rad = (rot * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const dx = x - cx;
+      const dy = y - cy;
+      x = cx + dx * cos - dy * sin;
+      y = cy + dx * sin + dy * cos;
+    }
+
+    return { x, y };
+  };
+
+  // Helper to ensure an active writable layer exists before drawing
+  // If pointer is inside a Cut Sheet -> bind that stroke to the Cut Sheet as owner
+  // If pointer is outside Cut Sheets (on root canvas) -> bind that stroke to Root Canvas
   const ensureActiveLayer = (pointerCoords = null) => {
-    // 1. If pointer is physically inside an existing cutting sheet, activate that sheet and its layer!
+    // 1. If pointer coordinates provided, hit-test against cutting sheets in real canvas space
     if (pointerCoords) {
-      const hitSheet = cuttingSheets.find((s) => {
-        const effW = s.isMirrored ? s.width * 2 : s.width;
-        return (
-          pointerCoords.x >= s.x &&
-          pointerCoords.x <= s.x + effW &&
-          pointerCoords.y >= s.y &&
-          pointerCoords.y <= s.y + s.height
-        );
+      const hitSheet = [...cuttingSheets].reverse().find((s) => {
+        if (s.visible === false) return false;
+        return canonicalToSheetLocal(pointerCoords, s).isInside;
       });
+
       if (hitSheet) {
         if (selectedCuttingSheetId !== hitSheet.id) setSelectedCuttingSheetId(hitSheet.id);
-        let sheetLayer = layers.find((l) => l.sheetId === hitSheet.id || l.id === hitSheet.layerId);
+        let sheetLayer = layers.find(
+          (l) => l.sheetId === hitSheet.id || l.id === hitSheet.layerId || l.id === `layer_sheet_${hitSheet.id}`
+        );
         if (!sheetLayer) {
           sheetLayer = {
             id: hitSheet.layerId || `layer_sheet_${hitSheet.id}`,
             sheetId: hitSheet.id,
-            name: `${hitSheet.name || 'Cutting Sheet'} Markings`,
+            name: `Sheet: ${hitSheet.name || 'Cutting Sheet'}`,
             bodiceType: 'Cutting Sheet Markings',
-            visible: true,
+            visible: hitSheet.visible !== false,
             locked: Boolean(hitSheet.locked),
             opacity: 1.0,
             elements: [],
@@ -545,40 +634,35 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           sheetLayer.locked = Boolean(hitSheet.locked);
         }
         if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
-        return sheetLayer;
+        return { ...sheetLayer, parentSheet: hitSheet, parentSheetId: hitSheet.id };
       }
+
+      // Pointer started outside all cut sheets -> BIND DIRECTLY TO ROOT CANVAS LAYER!
+      let rootLayer = layers.find((l) => l.id === activeLayerId && !l.sheetId && !l.id?.startsWith('layer_sheet_'));
+      if (!rootLayer) {
+        rootLayer = layers.find((l) => !l.sheetId && !l.id?.startsWith('layer_sheet_'));
+      }
+      if (!rootLayer) {
+        rootLayer = {
+          id: `layer-${Date.now()}`,
+          name: 'Layer 1 (Canvas Root)',
+          bodiceType: 'Custom Layer',
+          visible: true,
+          locked: false,
+          opacity: 1.0,
+          elements: [],
+          piece: null,
+          offsetX: 0,
+          offsetY: 0,
+          rotation: 0,
+        };
+        setLayers((prev) => [...prev, rootLayer]);
+      }
+      if (activeLayerId !== rootLayer.id) setActiveLayerId(rootLayer.id);
+      return { ...rootLayer, parentSheet: null, parentSheetId: null };
     }
 
-    // 2. If a cutting sheet is actively selected, ensure its layer is active
-    if (selectedCuttingSheetId) {
-      const sheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId);
-      if (sheet) {
-        let sheetLayer = layers.find((l) => l.sheetId === sheet.id || l.id === sheet.layerId);
-        if (!sheetLayer) {
-          sheetLayer = {
-            id: sheet.layerId || `layer_sheet_${sheet.id}`,
-            sheetId: sheet.id,
-            name: `${sheet.name || 'Cutting Sheet'} Markings`,
-            bodiceType: 'Cutting Sheet Markings',
-            visible: true,
-            locked: Boolean(sheet.locked),
-            opacity: 1.0,
-            elements: [],
-            piece: null,
-            offsetX: 0,
-            offsetY: 0,
-            rotation: 0,
-          };
-          setLayers((prev) => [...prev, sheetLayer]);
-        } else if (sheetLayer.locked !== Boolean(sheet.locked)) {
-          sheetLayer.locked = Boolean(sheet.locked);
-        }
-        if (activeLayerId !== sheetLayer.id) setActiveLayerId(sheetLayer.id);
-        return sheetLayer;
-      }
-    }
-
-    // 3. Fallback to active layer or create Layer 1
+    // 2. Fallback when no coordinates passed
     let current = layers.find((l) => l.id === activeLayerId);
     if (!current) {
       if (layers.length > 0) {
@@ -587,7 +671,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       } else {
         const newLayer = {
           id: `layer-${Date.now()}`,
-          name: 'Layer 1',
+          name: 'Layer 1 (Canvas Root)',
           bodiceType: 'Custom Layer',
           visible: true,
           locked: false,
@@ -600,10 +684,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         };
         setLayers([newLayer]);
         setActiveLayerId(newLayer.id);
-        return newLayer;
+        current = newLayer;
       }
     }
-    return current;
+    const boundSheet = current?.sheetId ? cuttingSheets.find((s) => s.id === current.sheetId) : null;
+    return { ...current, parentSheet: boundSheet, parentSheetId: boundSheet?.id || null };
   };
 
   // Record a complete universal snapshot for Undo/Redo across all layers and sub-layers
@@ -634,15 +719,29 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   };
 
   const toggleLayerVisibility = (id) => {
-    setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l))
-    );
+    setLayers((prev) => {
+      const target = prev.find((l) => l.id === id);
+      const nextVis = target ? !target.visible : true;
+      if (target?.sheetId) {
+        setCuttingSheets((sheets) =>
+          sheets.map((s) => (s.id === target.sheetId ? { ...s, visible: nextVis } : s))
+        );
+      }
+      return prev.map((l) => (l.id === id ? { ...l, visible: nextVis } : l));
+    });
   };
 
   const toggleLayerLock = (id) => {
-    setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l))
-    );
+    setLayers((prev) => {
+      const target = prev.find((l) => l.id === id);
+      const nextLocked = target ? !target.locked : false;
+      if (target?.sheetId) {
+        setCuttingSheets((sheets) =>
+          sheets.map((s) => (s.id === target.sheetId ? { ...s, locked: nextLocked } : s))
+        );
+      }
+      return prev.map((l) => (l.id === id ? { ...l, locked: nextLocked } : l));
+    });
   };
 
   const deleteLayer = (id) => {
@@ -967,12 +1066,43 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   // Cutting Sheet Management (Spawning, Duplicating, Mirroring & Seam Allowances)
   // -------------------------------------------------------------------------
   const addCuttingSheet = (config = {}) => {
-    const defaultW = config.width || 360;
-    const defaultH = config.height || 480;
-    // Align on 20px drafting grid
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const vpW = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    const vpH = typeof window !== 'undefined' ? window.innerHeight : 768;
+
+    let defaultW = config.width || 360;
+    let defaultH = config.height || 480;
+    const isMirrored = config.isMirrored !== undefined ? config.isMirrored : false;
+
+    // Mobile layout constraints: "shrink everything just to fit the screen in mobile mode including the cut sheets or automatic bodice generated"
+    if (isMobile) {
+      if (isMirrored) {
+        // Mirrored sheet effective total width is 2 * defaultW
+        // Shrink half-width to max 125px so total width is 250px (fits safely inside 360-390px mobile screens)
+        defaultW = Math.min(config.width ? Math.min(config.width, 125) : 125, 125);
+        defaultH = Math.min(config.height || 300, 300);
+      } else {
+        defaultW = Math.min(config.width || 220, 220);
+        defaultH = Math.min(config.height || 300, 300);
+      }
+    }
+
+    const effW = isMirrored ? defaultW * 2 : defaultW;
+    const effH = defaultH;
+
+    // Align on 20px drafting grid (or center in first screen on mobile)
     const sheetCount = cuttingSheets.length;
-    const gridX = config.x !== undefined ? config.x : Math.round((120 + (sheetCount % 4) * 60) / 20) * 20;
-    const gridY = config.y !== undefined ? config.y : Math.round((80 + (sheetCount % 4) * 40) / 20) * 20;
+    let gridX = config.x !== undefined ? config.x : Math.round((120 + (sheetCount % 4) * 60) / 20) * 20;
+    let gridY = config.y !== undefined ? config.y : Math.round((80 + (sheetCount % 4) * 40) / 20) * 20;
+
+    if (isMobile) {
+      // Center accurately on the mobile screen inside the first screen
+      const currentZoom = Math.min(zoom, 0.65);
+      if (zoom > 0.65) setZoom(0.65);
+      gridX = Math.round((vpW / 2 - (effW * currentZoom) / 2 - panOffset.x) / currentZoom);
+      gridY = Math.max(15, Math.round(((vpH - 150) / 2 - (effH * currentZoom) / 2 - panOffset.y) / currentZoom));
+    }
+
     const sheetId = `sheet_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const sheetName = config.name || `Cutting Sheet ${sheetCount + 1}`;
     const layerId = `layer_sheet_${sheetId}`;
@@ -987,7 +1117,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       height: defaultH,
       color: config.color || '#ffffff',
       opacity: config.opacity !== undefined ? config.opacity : 0.98,
-      isMirrored: config.isMirrored !== undefined ? config.isMirrored : false,
+      isMirrored: isMirrored,
       locked: false,
       hasSeamAllowance: config.hasSeamAllowance !== undefined ? config.hasSeamAllowance : true,
       seamAllowanceInches: config.seamAllowanceInches || 0.625,
@@ -1032,11 +1162,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       const current = prev.find((s) => s.id === sheetId);
       if (!current) return prev;
 
-      const dx = updates.x !== undefined ? updates.x - current.x : 0;
-      const dy = updates.y !== undefined ? updates.y - current.y : 0;
+      // Rescaling child strokes proportionally if sheet dimensions change
+      const scaleX = updates.width !== undefined && current.width ? updates.width / current.width : 1;
+      const scaleY = updates.height !== undefined && current.height ? updates.height / current.height : 1;
 
-      // If sheet moved, also shift any vector strokes on its layer so drawn lines stay pinned to the sheet!
-      if (dx !== 0 || dy !== 0) {
+      if (scaleX !== 1 || scaleY !== 1) {
         setLayers((prevLayers) =>
           prevLayers.map((l) => {
             if (l.sheetId === sheetId || l.id === current.layerId || l.id === `layer_sheet_${sheetId}`) {
@@ -1046,22 +1176,22 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   if (el.tool === 'dart_marker' && el.apex && el.legs) {
                     return {
                       ...el,
-                      apex: { x: Math.round(el.apex.x + dx), y: Math.round(el.apex.y + dy) },
+                      apex: { x: Math.round(el.apex.x * scaleX * 10) / 10, y: Math.round(el.apex.y * scaleY * 10) / 10 },
                       legs: el.legs.map((pt) => ({
-                        x: Math.round(pt.x + dx),
-                        y: Math.round(pt.y + dy),
+                        x: Math.round(pt.x * scaleX * 10) / 10,
+                        y: Math.round(pt.y * scaleY * 10) / 10,
                       })),
                     };
                   }
                   if (!el.points) return el;
-                  const shiftedPoints = el.points.map((pt) => ({
-                    x: Math.round(pt.x + dx),
-                    y: Math.round(pt.y + dy),
+                  const scaledPoints = el.points.map((pt) => ({
+                    x: Math.round(pt.x * scaleX * 10) / 10,
+                    y: Math.round(pt.y * scaleY * 10) / 10,
                   }));
                   return {
                     ...el,
-                    points: shiftedPoints,
-                    pathData: renderPointsToPath(shiftedPoints),
+                    points: scaledPoints,
+                    pathData: renderPointsToPath(scaledPoints),
                   };
                 }),
               };
@@ -1071,14 +1201,20 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         );
       }
 
-      // If sheet renamed, update layer name too
-      if (updates.name && current.layerId) {
+      // Synchronize visibility, lock state, and name with bound layer
+      if (updates.visible !== undefined || updates.locked !== undefined || updates.name) {
         setLayers((prevLayers) =>
-          prevLayers.map((l) =>
-            l.id === current.layerId || l.sheetId === sheetId
-              ? { ...l, name: `Sheet: ${updates.name}` }
-              : l
-          )
+          prevLayers.map((l) => {
+            if (l.sheetId === sheetId || l.id === current.layerId || l.id === `layer_sheet_${sheetId}`) {
+              return {
+                ...l,
+                ...(updates.visible !== undefined ? { visible: updates.visible } : {}),
+                ...(updates.locked !== undefined ? { locked: Boolean(updates.locked) } : {}),
+                ...(updates.name ? { name: `Sheet: ${updates.name}` } : {}),
+              };
+            }
+            return l;
+          })
         );
       }
 
@@ -1101,15 +1237,20 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       layerId: newLayerId,
     };
 
-    // Duplicate strokes from original layer shifted by +40, +40
+    // Duplicate strokes and dart markers with identical local coordinates
     const origLayer = layers.find((l) => l.id === target.layerId || l.sheetId === id);
     const duplicatedElements = (origLayer?.elements || []).map((el) => {
-      const shifted = (el.points || []).map((pt) => ({ x: pt.x + 40, y: pt.y + 40 }));
+      if (el.tool === 'dart_marker' && el.apex && el.legs) {
+        return {
+          ...el,
+          id: `dart_dup_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          sheetId: newSheetId,
+        };
+      }
       return {
         ...el,
         id: `stroke_dup_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        points: shifted,
-        pathData: renderPointsToPath(shifted),
+        sheetId: newSheetId,
       };
     });
 
@@ -1137,12 +1278,22 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
   const handleRemoveCuttingSheet = (id) => {
     const target = cuttingSheets.find((s) => s.id === id);
-    setCuttingSheets((prev) => prev.filter((s) => s.id !== id));
-    if (target?.layerId) {
-      setLayers((prev) => prev.filter((l) => l.id !== target.layerId && l.sheetId !== id));
-    }
+    const remainingSheets = cuttingSheets.filter((s) => s.id !== id);
+    setCuttingSheets(remainingSheets);
+    setLayers((prev) => {
+      const remaining = prev.filter(
+        (l) => l.sheetId !== id && l.id !== target?.layerId && l.id !== `layer_sheet_${id}`
+      );
+      if (activeLayerId && (activeLayerId === target?.layerId || activeLayerId === `layer_sheet_${id}`)) {
+        // Activate previous remaining sheet layer, moving it to front
+        const prevSheetLayer = remaining.find((l) => l.isCuttingSheet);
+        setActiveLayerId(prevSheetLayer ? prevSheetLayer.id : (remaining.length > 0 ? remaining[0].id : null));
+      }
+      return remaining;
+    });
     if (selectedCuttingSheetId === id) {
-      setSelectedCuttingSheetId(null);
+      const prevSheet = remainingSheets.length > 0 ? remainingSheets[remainingSheets.length - 1] : null;
+      setSelectedCuttingSheetId(prevSheet ? prevSheet.id : null);
     }
   };
 
@@ -1302,10 +1453,53 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     setActiveSnapPoint(null);
   };
 
-  // Reset Zoom Action: Restores 100% (1.0 scale), resets pan coordinates to origin (0,0), and clears transient HUDs
+  // Apply Zoom Action with centered viewport preservation (recalculating viewport transform together)
+  const applyDraftingZoom = (newZoomOrUpdater) => {
+    setZoom((prevZoom) => {
+      const target = typeof newZoomOrUpdater === 'function' ? newZoomOrUpdater(prevZoom) : newZoomOrUpdater;
+      const clamped = Math.max(0.5, Math.min(4.0, Math.round(target * 100) / 100));
+
+      const container = containerRef.current || (typeof window !== 'undefined' ? window : null);
+      const viewW = container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 400);
+      const viewH = container?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 600);
+      const centerX = viewW / 2;
+      const centerY = viewH / 2;
+
+      if (clamped <= 0.505) {
+        const activeSheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId) || cuttingSheets[0];
+        const sheetCenterX = activeSheet ? (activeSheet.x + (activeSheet.isMirrored ? activeSheet.width * 2 : activeSheet.width) / 2) : 300;
+        const sheetCenterY = activeSheet ? (activeSheet.y + activeSheet.height / 2) : 320;
+        setPanOffset({
+          x: Math.round(centerX - sheetCenterX * clamped),
+          y: Math.round(centerY - sheetCenterY * clamped),
+        });
+      } else {
+        const scaleRatio = clamped / prevZoom;
+        setPanOffset((prevPan) => ({
+          x: Math.round(centerX - (centerX - prevPan.x) * scaleRatio),
+          y: Math.round(centerY - (centerY - prevPan.y) * scaleRatio),
+        }));
+      }
+
+      return clamped;
+    });
+  };
+
+  // Reset Zoom Action: Restores centered baseline (0.5 on mobile, 1.0 on desktop)
   const handleResetZoom = () => {
-    setZoom(1.0);
-    setPanOffset({ x: 0, y: 0 });
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const targetZoom = isMobile ? 0.5 : 1.0;
+    const viewW = containerRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 400);
+    const viewH = containerRef.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 600);
+    const activeSheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId) || cuttingSheets[0];
+    const sheetCenterX = activeSheet ? (activeSheet.x + (activeSheet.isMirrored ? activeSheet.width * 2 : activeSheet.width) / 2) : 300;
+    const sheetCenterY = activeSheet ? (activeSheet.y + activeSheet.height / 2) : 320;
+
+    setZoom(targetZoom);
+    setPanOffset({
+      x: Math.round(viewW / 2 - sheetCenterX * targetZoom),
+      y: Math.round(viewH / 2 - sheetCenterY * targetZoom),
+    });
     setCurrentStroke(null);
     setActiveSnapPoint(null);
     setSteadyStrokeHUD(null);
@@ -1668,15 +1862,26 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     if (activeTool === 'dart_marker') {
       pushUndoSnapshot();
       const baseId = `dart_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const isBoundToSheet = Boolean(currentLayer.parentSheet);
+      let dartApexX = x;
+      let dartApexY = y;
+      if (isBoundToSheet) {
+        const loc = canonicalToSheetLocal({ x, y }, currentLayer.parentSheet);
+        dartApexX = loc.localX;
+        dartApexY = loc.localY;
+      }
+
       const dartStroke = {
         id: baseId,
         tool: 'dart_marker',
-        apex: { x, y },
+        apex: { x: dartApexX, y: dartApexY },
         legs: [
-          { x: x - 6, y: y + 20 },
-          { x: x, y: y },
-          { x: x + 6, y: y + 20 },
+          { x: dartApexX - 6, y: dartApexY + 20 },
+          { x: dartApexX, y: dartApexY },
+          { x: dartApexX + 6, y: dartApexY + 20 },
         ],
+        parentSheetId: currentLayer.parentSheetId || null,
+        targetLayerId: currentLayer.id,
         color: brushColor,
         size: Math.max(0.75, Math.round((0.9 / Math.max(0.6, zoom)) * 10) / 10),
         fontSize: 7,
@@ -1689,7 +1894,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
       const elementsToAdd = [dartStroke];
 
-      if (symmetryEnabled && typeof symmetryAxisX === 'number') {
+      if (!isBoundToSheet && symmetryEnabled && typeof symmetryAxisX === 'number') {
         const mirroredApexX = Math.round((2 * symmetryAxisX - x) * 10) / 10;
         elementsToAdd.push({
           ...dartStroke,
@@ -1798,18 +2003,28 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     // maintain exact 1:1 physical proportion to pattern sheet when zooming out
     const calibratedStrokeSize = isSeam ? 2.5 : isPen ? Math.max(1, Math.round((brushSize / Math.max(0.5, zoom)) * 10) / 10) : brushSize;
 
+    let strokeStartX = startX;
+    let strokeStartY = startY;
+    if (currentLayer.parentSheet) {
+      const loc = canonicalToSheetLocal({ x: startX, y: startY }, currentLayer.parentSheet);
+      strokeStartX = loc.localX;
+      strokeStartY = loc.localY;
+    }
+
     const newStroke = {
       id: `stroke_${Date.now()}`,
       tool: activeTool,
       isSeamAllowance: isSeam,
       dashed: isSeam,
-      points: [{ x: startX, y: startY }],
+      points: [{ x: strokeStartX, y: strokeStartY }],
+      parentSheetId: currentLayer.parentSheetId || null,
+      targetLayerId: currentLayer.id,
       color: isSeam ? '#38bdf8' : activeTool === 'eraser' ? '#090d16' : brushColor,
       size: calibratedStrokeSize,
       createdZoom: zoom,
       opacity: brushOpacity,
-      symmetry: symmetryEnabled,
-      symmetryAxisX: symmetryAxisX,
+      symmetry: !currentLayer.parentSheetId && symmetryEnabled,
+      symmetryAxisX: !currentLayer.parentSheetId ? symmetryAxisX : null,
       label: isSeam ? '5/8" Seam Allowance' : undefined,
     };
 
@@ -2105,14 +2320,25 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         });
       }
 
+      let currentPtX = strokeX;
+      let currentPtY = strokeY;
+      if (currentStroke.parentSheetId) {
+        const parentSheet = cuttingSheets.find((s) => s.id === currentStroke.parentSheetId);
+        if (parentSheet) {
+          const loc = canonicalToSheetLocal({ x: strokeX, y: strokeY }, parentSheet);
+          currentPtX = loc.localX;
+          currentPtY = loc.localY;
+        }
+      }
+
       setCurrentStroke((prev) => {
         if (!prev) return prev;
         const lastPt = prev.points[prev.points.length - 1];
-        const dist = Math.hypot(strokeX - lastPt.x, strokeY - lastPt.y);
+        const dist = Math.hypot(currentPtX - lastPt.x, currentPtY - lastPt.y);
         // Instant 1.0px sampling for Pen handwriting so loops, curves, and letters don't lag or stick
         const decimateThreshold = prev.tool === 'pen' ? 1.0 : (steadyStrokeEnabled ? 2.5 : ((prev.tool === 'chalk' || prev.tool === 'scissors') ? 12 : 4));
         if (dist >= decimateThreshold) {
-          return { ...prev, points: [...prev.points, { x: strokeX, y: strokeY }] };
+          return { ...prev, points: [...prev.points, { x: currentPtX, y: currentPtY }] };
         }
         return prev;
       });
@@ -2165,8 +2391,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     }
 
     if (currentStroke && currentStroke.points.length > 0) {
-      const firstPt = currentStroke.points[0];
-      const targetLayer = ensureActiveLayer(firstPt);
+      // Stroke's target layer was IMMUTABLY determined at pointer down
+      let targetLayer = layers.find((l) => l.id === currentStroke.targetLayerId);
+      if (!targetLayer) {
+        targetLayer = ensureActiveLayer();
+      }
 
       if (currentStroke.tool === 'eraser') {
         const eraserRadius = Math.max(14, currentStroke.size * 2);
@@ -2205,8 +2434,14 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
       const elementsToAdd = [strokeToCommit];
 
-      // Mirror Tool deterministic copy: x' = 2M - x
-      if (symmetryEnabled && typeof symmetryAxisX === 'number') {
+      // Mirror Tool deterministic copy: strictly only for Canvas root strokes
+      if (
+        !currentStroke.parentSheetId &&
+        !targetLayer?.sheetId &&
+        !targetLayer?.isCuttingSheet &&
+        symmetryEnabled &&
+        typeof symmetryAxisX === 'number'
+      ) {
         const mirroredPoints = originalPoints.map((pt) => ({
           x: Math.round((2 * symmetryAxisX - pt.x) * 10) / 10,
           y: pt.y,
@@ -2454,14 +2689,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       const panDy = currentMidY - touchZoomRef.current.startMidY;
 
       setZoom(newZoom);
-      if (newZoom <= 0.5) {
-        setPanOffset({ x: 0, y: 0 });
-      } else {
-        setPanOffset({
-          x: Math.round(touchZoomRef.current.startPanX + panDx),
-          y: Math.round(touchZoomRef.current.startPanY + panDy),
-        });
-      }
+      setPanOffset({
+        x: Math.round(touchZoomRef.current.startPanX + panDx),
+        y: Math.round(touchZoomRef.current.startPanY + panDy),
+      });
       return;
     }
     if (e.touches.length === 1) {
@@ -2481,18 +2712,22 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     <div className="flex flex-col h-full flex-1 bg-[#090d16] text-slate-100 font-sans select-none overflow-hidden relative">
       {/* ========================================================================= */}
       {/* 1A. MOBILE WORKSPACE HEADER (Pattern Drafting & Cutting Table)            */}
-      {/* Pattern Drafting Board: [←] [Undo] [Redo] [Layers] [Zoom] [⋯]            */}
-      {/* Cutting Table:          [←] [Undo] [Redo] [Layers] [Zoom] [Move] [⋯]     */}
+      {/* Pattern Drafting Board: [←/→] [Undo] [Redo] [Layers] [Zoom] [⋯]          */}
+      {/* Cutting Table:          [←/→] [Undo] [Redo] [Layers] [Zoom] [Move] [⋯]   */}
       {/* ========================================================================= */}
-      <div className="md:hidden h-13 px-2.5 bg-[#0d1322] border-b border-slate-800/90 flex items-center justify-between z-30 shrink-0 select-none shadow-md">
-        {/* Left: Back button + Workspace badge */}
+      <div className="md:hidden h-13 px-2.5 bg-[#0d1322] border-b border-slate-800/90 flex items-center justify-between z-40 shrink-0 select-none shadow-md">
+        {/* Left: Tab Switching Arrow button + Workspace badge */}
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => window.history.back()}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/70 transition-all"
-            title="Go Back"
+            onClick={() => handleSelectSubTab(activeSubTab === 'drafting' ? 'cutting' : 'drafting')}
+            className="p-1.5 rounded-lg text-amber-400 hover:text-white hover:bg-slate-800/70 transition-all flex items-center justify-center"
+            title={activeSubTab === 'drafting' ? 'Switch to Cutting Table' : 'Switch to Pattern Drafting Board'}
           >
-            <ArrowLeft className="w-4 h-4" />
+            {activeSubTab === 'drafting' ? (
+              <ArrowRight className="w-4 h-4" />
+            ) : (
+              <ArrowLeft className="w-4 h-4" />
+            )}
           </button>
           <div className="w-6 h-6 rounded bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-black text-[11px] shadow-xs">
             TX
@@ -2580,11 +2815,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           Math.max(0.5, cuttingTableZoom - 0.1)
                         );
                       } else {
-                        setZoom((prev) => {
-                          const next = Math.max(0.5, Math.round((prev - 0.25) * 100) / 100);
-                          if (next <= 0.5) setPanOffset({ x: 0, y: 0 });
-                          return next;
-                        });
+                        applyDraftingZoom((prev) => Math.max(0.5, Math.round((prev - 0.25) * 100) / 100));
                       }
                     }}
                     className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
@@ -2604,7 +2835,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           Math.min(2.5, cuttingTableZoom + 0.1)
                         );
                       } else {
-                        setZoom((prev) => Math.min(4.0, Math.round((prev + 0.25) * 100) / 100));
+                        applyDraftingZoom((prev) => Math.min(4.0, Math.round((prev + 0.25) * 100) / 100));
                       }
                     }}
                     className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
@@ -2619,8 +2850,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       if (activeSubTab === 'cutting') {
                         bigCuttingTableRef.current?.applyTableZoom?.(0.5);
                       } else {
-                        setZoom(0.5);
-                        setPanOffset({ x: 0, y: 0 });
+                        applyDraftingZoom(0.5);
                       }
                       setMobileZoomPopoverOpen(false);
                     }}
@@ -2633,8 +2863,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       if (activeSubTab === 'cutting') {
                         bigCuttingTableRef.current?.applyTableZoom?.(1.0);
                       } else {
-                        setZoom(1.0);
-                        setPanOffset({ x: 0, y: 0 });
+                        applyDraftingZoom(1.0);
                       }
                       setMobileZoomPopoverOpen(false);
                     }}
@@ -2647,8 +2876,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       if (activeSubTab === 'cutting') {
                         bigCuttingTableRef.current?.centerAndFitTable?.();
                       } else {
-                        setZoom(0.5);
-                        setPanOffset({ x: 0, y: 0 });
+                        handleResetZoom();
                       }
                       setMobileZoomPopoverOpen(false);
                     }}
@@ -2684,6 +2912,77 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </button>
           )}
 
+          {/* Pattern Drafting Board Only: Mirror Tool Quick Toggle & Auto Bodice Generation */}
+          {activeSubTab === 'drafting' && (
+            <>
+              {/* Mirror Tool Button in Mobile Header */}
+              <button
+                onClick={handleToggleSymmetry}
+                className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all border ${
+                  symmetryEnabled
+                    ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-gold-sm font-black'
+                    : 'bg-[#060912] border-slate-800 text-slate-300 hover:text-white'
+                }`}
+                title="Mirror Tool: Symmetrical drawing from top to bottom of screen"
+              >
+                <FlipHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden min-[380px]:inline text-[10px]">Mirror</span>
+              </button>
+
+              {/* Auto Bodice Spawner in Mobile Header */}
+              <div className="relative">
+                <button
+                  onClick={() => setMobileBodiceMenuOpen((prev) => !prev)}
+                  className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-300 text-xs font-bold flex items-center gap-1 transition-all"
+                  title="Generate Automatic Bodice Block"
+                >
+                  <Shirt className="w-3.5 h-3.5" />
+                  <span className="hidden min-[380px]:inline">+ Bodice</span>
+                </button>
+                {mobileBodiceMenuOpen && (
+                  <div className="absolute right-0 top-full mt-2 z-50 bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2 w-48 text-slate-200 space-y-1">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-1 px-1 text-[11px] font-bold text-amber-400 uppercase">
+                      <span>Auto Bodice Blocks</span>
+                      <button onClick={() => setMobileBodiceMenuOpen(false)} className="text-slate-400 hover:text-white">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => {
+                        handleAddBodiceBlock('front');
+                        setMobileBodiceMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
+                    >
+                      <span>Front Bodice</span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleAddBodiceBlock('back');
+                        setMobileBodiceMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
+                    >
+                      <span>Back Bodice</span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleAddBodiceBlock('sleeve');
+                        setMobileBodiceMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
+                    >
+                      <span>Fitted Sleeve</span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           {/* More Options [⋯] */}
           <button
             onClick={() => setMobileHeaderDrawerOpen(true)}
@@ -2695,36 +2994,56 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         </div>
       </div>
 
-      {/* Mobile Header Drawer [⋯] */}
+      {/* Drafting / Cutting Options Drawer (Positioned correctly on screen, refined typography, and scrolling effect) */}
       {mobileHeaderDrawerOpen && (
-        <div className="fixed inset-0 z-50 md:hidden flex justify-end bg-black/60 backdrop-blur-xs">
-          <div className="w-80 max-w-[85vw] h-full bg-[#0d1322] border-l border-slate-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
-            <div className="h-13 px-4 border-b border-slate-800 flex items-center justify-between shrink-0">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                {activeSubTab === 'drafting' ? 'Drafting Options' : 'Cutting Table Options'}
-              </span>
+        <div
+          className="fixed top-13 md:top-0 right-0 bottom-0 left-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity duration-200"
+          onClick={() => setMobileHeaderDrawerOpen(false)}
+        >
+          <div
+            className="w-full max-w-[320px] sm:max-w-sm h-full bg-[#0d1322] border-l border-slate-800/90 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 text-slate-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drawer Header (Refined, reduced boldness) */}
+            <div className="h-14 px-4 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-[#090d16]/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  {activeSubTab === 'drafting' ? <PenTool className="w-3.5 h-3.5" /> : <Scissors className="w-3.5 h-3.5" />}
+                </div>
+                <div>
+                  <span className="text-xs font-semibold tracking-wide text-slate-100 block">
+                    {activeSubTab === 'drafting' ? 'Drafting Options' : 'Cutting Table Options'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {activeSubTab === 'drafting' ? 'Sheets, Bodices & Export' : 'Fabric, Layout & Tools'}
+                  </span>
+                </div>
+              </div>
               <button
                 onClick={() => setMobileHeaderDrawerOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition-colors"
+                title="Close Drawer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 overscroll-contain text-xs">
-              {/* Switch Workspace */}
+            {/* Drawer Scrollable Content with Scrolling Effect */}
+            <div
+              className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar scroll-smooth p-4 space-y-4 text-xs touch-pan-y relative"
+            >
+              {/* Active Workspace Switcher */}
               <div className="space-y-1.5">
-                <span className="text-[11px] font-bold text-slate-400 uppercase">Active Workspace</span>
-                <div className="grid grid-cols-2 gap-1.5 bg-[#060912] p-1 rounded-xl border border-slate-800">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Active Workspace</span>
+                <div className="grid grid-cols-2 gap-1.5 bg-[#060912] p-1 rounded-xl border border-slate-800/80">
                   <button
                     onClick={() => {
                       handleSelectSubTab('drafting');
-                      setMobileHeaderDrawerOpen(false);
                     }}
-                    className={`py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition-all ${
+                    className={`py-1.5 px-2 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-all ${
                       activeSubTab === 'drafting'
-                        ? 'bg-amber-500 text-slate-950 shadow-gold-sm'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <PenTool className="w-3.5 h-3.5" />
@@ -2733,12 +3052,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   <button
                     onClick={() => {
                       handleSelectSubTab('cutting');
-                      setMobileHeaderDrawerOpen(false);
                     }}
-                    className={`py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition-all ${
+                    className={`py-1.5 px-2 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-all ${
                       activeSubTab === 'cutting'
-                        ? 'bg-amber-500 text-slate-950 shadow-gold-sm'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <Scissors className="w-3.5 h-3.5" />
@@ -2749,9 +3067,32 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
               {activeSubTab === 'drafting' ? (
                 <>
+                  {/* Mirror Tool (Symmetry) */}
+                  <div className="space-y-1.5 pb-2 border-b border-slate-800">
+                    <button
+                      onClick={() => {
+                        handleToggleSymmetry();
+                        setMobileHeaderDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all border ${
+                        symmetryEnabled
+                          ? 'bg-amber-400 text-slate-950 shadow-gold-sm border-amber-300'
+                          : 'bg-slate-800/60 border-slate-700/60 text-slate-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <FlipHorizontal className="w-4 h-4 text-amber-400" />
+                        <span>Mirror Tool (Symmetry)</span>
+                      </span>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${symmetryEnabled ? 'bg-black/30' : 'bg-slate-900 text-amber-400'}`}>
+                        {symmetryEnabled ? 'ACTIVE (ON)' : 'TURN ON'}
+                      </span>
+                    </button>
+                  </div>
+
                   {/* Bodice Cutting Sheets */}
                   <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase">Spawn Cutting Sheets</span>
+                    <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Spawn Cutting Sheets</span>
                     <div className="grid grid-cols-1 gap-1.5">
                       <button
                         onClick={() => {
@@ -2767,10 +3108,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           });
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-2 hover:bg-amber-500/25"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
                       >
                         <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>+ Front Bodice Sheet</span>
+                        <span>Front Bodice Sheet</span>
                       </button>
                       <button
                         onClick={() => {
@@ -2786,10 +3127,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           });
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-2 hover:bg-amber-500/25"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
                       >
                         <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>+ Back Bodice Sheet</span>
+                        <span>Back Bodice Sheet</span>
                       </button>
                       <button
                         onClick={() => {
@@ -2805,23 +3146,23 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           });
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-2 hover:bg-amber-500/25"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
                       >
                         <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>+ Sleeve Sheet</span>
+                        <span>Sleeve Sheet</span>
                       </button>
                       <button
                         onClick={() => {
                           setActiveTool((curr) => (curr === 'draw_sheet' ? 'chalk' : 'draw_sheet'));
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className={`w-full py-2 px-3 rounded-xl border font-bold flex items-center gap-2 ${
+                        className={`w-full py-2 px-3 rounded-xl border font-medium flex items-center gap-2 transition-all ${
                           activeTool === 'draw_sheet'
-                            ? 'bg-amber-400 text-slate-950 border-amber-300'
-                            : 'bg-[#060912] border-slate-800 text-slate-300'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
+                            : 'bg-slate-800/40 hover:bg-slate-800 border-slate-800 text-slate-300'
                         }`}
                       >
-                        <Square className="w-3.5 h-3.5" />
+                        <Square className="w-3.5 h-3.5 text-amber-400" />
                         <span>Draw Custom Sheet</span>
                       </button>
                       <button
@@ -2829,29 +3170,98 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           setActiveTool((curr) => (curr === 'seam_allowance' ? 'chalk' : 'seam_allowance'));
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className={`w-full py-2 px-3 rounded-xl border font-bold flex items-center gap-2 ${
+                        className={`w-full py-2 px-3 rounded-xl border font-medium flex items-center gap-2 transition-all ${
                           activeTool === 'seam_allowance'
-                            ? 'bg-sky-500 text-slate-950 border-sky-400'
-                            : 'bg-[#060912] border-slate-800 text-sky-300'
+                            ? 'bg-sky-500/20 text-sky-300 border-sky-400/50'
+                            : 'bg-slate-800/40 hover:bg-slate-800 border-slate-800 text-sky-300'
                         }`}
                       >
-                        <Scissors className="w-3.5 h-3.5" />
+                        <Scissors className="w-3.5 h-3.5 text-sky-400" />
                         <span>Seam Allowance Tool</span>
                       </button>
                     </div>
                   </div>
 
+                  {/* Active Cutting Sheets Management */}
+                  {cuttingSheets.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                      <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                        Cut Sheets ({cuttingSheets.length})
+                      </span>
+                      <div className="space-y-2">
+                        {cuttingSheets.map((sheet) => (
+                          <div
+                            key={sheet.id}
+                            className={`p-2.5 rounded-xl border transition-all ${
+                              selectedCuttingSheetId === sheet.id
+                                ? 'bg-amber-500/10 border-amber-400/40'
+                                : 'bg-[#060912] border-slate-800/80'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-medium text-slate-200 text-xs truncate max-w-[150px]">
+                                {sheet.name}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleUpdateCuttingSheet(sheet.id, { isMirrored: !sheet.isMirrored })}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all ${
+                                    sheet.isMirrored ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                  title="Toggle Mirror"
+                                >
+                                  Mirror {sheet.isMirrored ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateCuttingSheet(sheet.id, { locked: !sheet.locked })}
+                                  className={`p-1 rounded text-xs transition-colors ${
+                                    sheet.locked ? 'text-rose-400' : 'text-slate-400 hover:text-slate-200'
+                                  }`}
+                                  title="Toggle Lock"
+                                >
+                                  {sheet.locked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  handleDuplicateCuttingSheet(sheet.id);
+                                  setMobileHeaderDrawerOpen(false);
+                                }}
+                                className="flex-1 py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-[10px] flex items-center justify-center gap-1 transition-colors"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>Duplicate</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleImportSheetToCuttingTable(sheet.id);
+                                  setMobileHeaderDrawerOpen(false);
+                                }}
+                                className="flex-1 py-1 px-2 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-[10px] flex items-center justify-center gap-1 transition-all"
+                              >
+                                <Scissors className="w-3 h-3 text-amber-400" />
+                                <span>To Cutting</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Advanced and Export Actions */}
-                  <div className="space-y-2 pt-2 border-t border-slate-800">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase">Export & Options</span>
+                  <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                    <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Export & Options</span>
                     <button
                       onClick={() => {
                         setShowAdvancedDrawer(true);
                         setMobileHeaderDrawerOpen(false);
                       }}
-                      className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-amber-400 font-bold flex items-center gap-2"
+                      className="w-full py-2 px-3 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 text-slate-200 font-medium flex items-center gap-2 transition-all"
                     >
-                      <Sliders className="w-3.5 h-3.5" />
+                      <Sliders className="w-3.5 h-3.5 text-amber-400" />
                       <span>Advanced Tailor Options</span>
                     </button>
                     <button
@@ -2859,7 +3269,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         setShowExportModal(true);
                         setMobileHeaderDrawerOpen(false);
                       }}
-                      className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center gap-2 shadow-gold-sm"
+                      className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold flex items-center justify-center gap-2 shadow-xs transition-all"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Export Pattern (DXF / SVG)</span>
@@ -2870,7 +3280,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 <>
                   {/* Cutting Table Controls */}
                   <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase">Fabric Adjuster</span>
+                    <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Cutting Table Tools</span>
                     <button
                       onClick={() => {
                         if (bigCuttingTableRef.current?.setShowFabricAdjuster) {
@@ -2878,11 +3288,11 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         }
                         setMobileHeaderDrawerOpen(false);
                       }}
-                      className="w-full py-2 px-3 rounded-xl bg-slate-800/90 border border-amber-500/50 text-amber-300 font-bold flex items-center justify-between"
+                      className="w-full py-2 px-3 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 text-slate-200 font-medium flex items-center justify-between transition-all"
                     >
                       <span className="flex items-center gap-2">
                         <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Toggle Fabric Adjuster</span>
+                        <span>Fabric Width & Yardage</span>
                       </span>
                       <ChevronRight className="w-4 h-4 text-slate-400" />
                     </button>
@@ -2896,13 +3306,13 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                           setIsFabricVisible((v) => !v);
                         }
                       }}
-                      className="w-full py-2 px-3 rounded-xl bg-[#060912] border border-slate-800 text-slate-300 font-bold flex items-center justify-between"
+                      className="w-full py-2 px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-slate-200 font-medium flex items-center justify-between transition-all"
                     >
                       <span className="flex items-center gap-2">
                         {isFabricVisible ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5 text-emerald-400" />}
                         <span>{isFabricVisible ? 'Hide Fabric Overlayer' : 'Show Fabric Overlayer'}</span>
                       </span>
-                      <span className="text-[10px] font-mono text-amber-400">{isFabricVisible ? 'VISIBLE' : 'HIDDEN'}</span>
+                      <span className="text-[10px] font-mono text-amber-400/90">{isFabricVisible ? 'VISIBLE' : 'HIDDEN'}</span>
                     </button>
 
                     {/* Fit / Center Table */}
@@ -2911,7 +3321,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                         bigCuttingTableRef.current?.centerAndFitTable?.();
                         setMobileHeaderDrawerOpen(false);
                       }}
-                      className="w-full py-2 px-3 rounded-xl bg-[#060912] border border-slate-800 text-slate-300 font-bold flex items-center gap-2"
+                      className="w-full py-2 px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-slate-200 font-medium flex items-center gap-2 transition-all"
                     >
                       <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
                       <span>Center & Fit Rack to Viewport</span>
@@ -2919,13 +3329,13 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   </div>
 
                   {/* Save to Project Gallery */}
-                  <div className="pt-2 border-t border-slate-800">
+                  <div className="pt-2 border-t border-slate-800/80">
                     <button
                       onClick={() => {
                         bigCuttingTableRef.current?.handleManualSaveToGallery?.();
                         setMobileHeaderDrawerOpen(false);
                       }}
-                      className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center justify-center gap-2 shadow-gold-sm"
+                      className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold flex items-center justify-center gap-2 shadow-xs transition-all"
                     >
                       <Save className="w-4 h-4" />
                       <span>Save to Project Gallery</span>
@@ -2941,7 +3351,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       {/* ========================================================================= */}
       {/* 1B. DESKTOP WORKSPACE HEADER (Pattern Drafting Board & Cutting Table)     */}
       {/* ========================================================================= */}
-      <header className="hidden md:flex h-13 px-4 sm:px-6 bg-[#0d1322] border-b border-slate-800/90 items-center justify-between z-30 shrink-0 shadow-md">
+      <header className="hidden md:flex h-13 px-4 sm:px-6 bg-[#0d1322] border-b border-slate-800/90 items-center justify-between z-40 shrink-0 shadow-md">
         <div className="flex items-center gap-3 sm:gap-5">
           {/* Garment Project Badge */}
           <div className="flex items-center gap-2">
@@ -3068,6 +3478,25 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 <Scissors className="w-3.5 h-3.5" />
                 <span>Seam Allowance</span>
               </button>
+
+              <div className="h-4 w-px bg-slate-800 my-auto mx-0.5" />
+
+              {/* Mirror Tool Button in Desktop Header */}
+              <button
+                onClick={handleToggleSymmetry}
+                className={`px-2.5 py-1 text-xs rounded-lg font-bold flex items-center gap-1.5 transition-all border ${
+                  symmetryEnabled
+                    ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-gold-sm font-black'
+                    : 'bg-slate-800/60 text-slate-300 border-slate-700/60 hover:text-white hover:bg-slate-800'
+                }`}
+                title="Mirror Tool: Symmetrical drawing line from top to bottom of screen"
+              >
+                <FlipHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                <span>Mirror Tool</span>
+                <span className={`text-[9px] font-mono px-1 rounded ${symmetryEnabled ? 'bg-black/30 text-slate-950 font-bold' : 'bg-slate-900 text-amber-400'}`}>
+                  {symmetryEnabled ? 'ON' : 'OFF'}
+                </span>
+              </button>
             </div>
           )}
 
@@ -3183,11 +3612,21 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           {/* Advanced Tailor Options Drawer Trigger */}
           <button
             onClick={() => setShowAdvancedDrawer(true)}
-            className="px-2.5 py-1.5 bg-[#060912] hover:bg-slate-800 border border-slate-800 text-amber-400 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5"
+            className="px-2.5 py-1.5 bg-[#060912] hover:bg-slate-800 border border-slate-800 text-amber-400 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
             title="Open Advanced Tailor Options (DXF export, node coordinates, exact seam offsets)"
           >
             <Sliders className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Advanced</span>
+          </button>
+
+          {/* Workspace Options Drawer Trigger (Drafting / Cutting) */}
+          <button
+            onClick={() => setMobileHeaderDrawerOpen(true)}
+            className="px-2.5 py-1.5 bg-[#060912] hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            title={activeSubTab === 'drafting' ? 'Open Drafting Options' : 'Open Cutting Table Options'}
+          >
+            <MoreHorizontal className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Options</span>
           </button>
 
           {/* Export Button */}
@@ -3249,7 +3688,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         {/* SKETCHBOOK TOOLS SIDEBAR (Collapsible Floating Panel)                   */}
         {/* ======================================================================= */}
         {isToolsCollapsed ? (
-          <div className="absolute top-4 left-4 z-40 bg-[#0d1322]/95 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-2xl w-13 text-slate-100 flex flex-col items-center gap-2">
+          <div className="absolute top-4 left-4 z-50 bg-[#0d1322]/95 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-2xl w-13 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col items-center gap-2">
             <button
               onClick={() => setIsToolsCollapsed(false)}
               className="p-2 hover:bg-slate-800 text-amber-400 hover:text-amber-300 rounded-xl transition-all"
@@ -3319,6 +3758,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               title="Draw Custom Cutting Sheet"
             >
               <Square className="w-4 h-4" />
+            </button>
+
+            {/* Mirror Tool Button (Collapsed Rail) */}
+            <button
+              onClick={handleToggleSymmetry}
+              className={`p-2 rounded-xl text-xs transition-all ${
+                symmetryEnabled
+                  ? 'bg-amber-400 text-slate-950 font-black shadow-gold-sm ring-1 ring-amber-300'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+              title="Mirror Tool: Symmetrical drawing from top to bottom of screen"
+            >
+              <FlipHorizontal className="w-4 h-4 text-amber-400" />
             </button>
 
             <button
@@ -3392,7 +3844,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </button>
           </div>
         ) : (
-          <div className="absolute top-4 left-4 z-40 bg-[#0d1322]/95 backdrop-blur-md p-3.5 rounded-2xl border border-slate-800 shadow-2xl w-56 sm:w-60 max-h-[50vh] md:max-h-[85vh] overflow-y-auto overscroll-contain text-slate-100 flex flex-col gap-3">
+          <div className="absolute top-4 left-4 z-50 bg-[#0d1322]/95 backdrop-blur-md p-3.5 rounded-2xl border border-slate-800 shadow-2xl w-56 sm:w-60 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col gap-3">
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
               <span className="text-[11px] font-bold tracking-wider text-amber-400 uppercase">
                 Sketchbook Tools
@@ -3440,6 +3892,121 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               >
                 {snappingEnabled ? 'MAGNETIC' : 'OFF'}
               </button>
+            </div>
+
+            {/* Mirror Tool (Symmetry) - Prominently at the top of Sketchbook Tools */}
+            <div className="space-y-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/40">
+              <button
+                onClick={handleToggleSymmetry}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-xs font-bold transition-all border ${
+                  symmetryEnabled
+                    ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-gold-sm'
+                    : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+                title="Mirror Tool: Symmetrical drawing line from top to bottom of screen"
+              >
+                <span className="flex items-center gap-1.5">
+                  <FlipHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Mirror Tool (Symmetry)</span>
+                </span>
+                <span className={`text-[10px] font-mono font-black px-1.5 py-0.5 rounded ${symmetryEnabled ? 'bg-slate-900 text-amber-400' : 'bg-slate-800 text-slate-400'}`}>
+                  {symmetryEnabled ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Moveable Mirror Position Controls */}
+              {symmetryEnabled && (
+                <div className="space-y-2 pt-1 text-xs">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Move className="w-3 h-3" />
+                      <span>Axis Position</span>
+                    </span>
+                    <span className="font-mono font-bold text-amber-300 bg-slate-900/80 px-1.5 py-0.5 rounded border border-amber-500/30">
+                      X: {symmetryAxisX}px
+                    </span>
+                  </div>
+
+                  {/* Free Position Slider */}
+                  <input
+                    type="range"
+                    min="50"
+                    max="2500"
+                    step="5"
+                    value={symmetryAxisX}
+                    onChange={(e) => setSymmetryAxisX(Number(e.target.value))}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-ew-resize accent-amber-400"
+                    title="Slide to move mirror axis freely across workspace"
+                  />
+
+                  {/* Fine Nudge Directional Buttons */}
+                  <div className="flex items-center justify-between gap-1 text-[10px] font-mono">
+                    <button
+                      onClick={() => setSymmetryAxisX((x) => Math.max(20, x - 50))}
+                      className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
+                      title="Shift Left 50px"
+                    >
+                      -50px
+                    </button>
+                    <button
+                      onClick={() => setSymmetryAxisX((x) => Math.max(20, x - 10))}
+                      className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
+                      title="Shift Left 10px"
+                    >
+                      -10px
+                    </button>
+                    <button
+                      onClick={() => setSymmetryAxisX((x) => Math.min(3800, x + 10))}
+                      className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
+                      title="Shift Right 10px"
+                    >
+                      +10px
+                    </button>
+                    <button
+                      onClick={() => setSymmetryAxisX((x) => Math.min(3800, x + 50))}
+                      className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
+                      title="Shift Right 50px"
+                    >
+                      +50px
+                    </button>
+                  </div>
+
+                  {/* Quick Alignment Presets */}
+                  <div className="flex items-center gap-1 pt-1 border-t border-amber-500/20">
+                    <button
+                      onClick={() => {
+                        const centerX = Math.round((-panOffset.x + (typeof window !== 'undefined' ? window.innerWidth / 2 : 500)) / zoom);
+                        setSymmetryAxisX(Math.max(20, centerX));
+                      }}
+                      className="flex-1 py-1 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-amber-300 rounded transition-all truncate px-1"
+                      title="Align mirror axis to center of current view"
+                    >
+                      Center Screen
+                    </button>
+                    {cuttingSheets.length > 0 && (
+                      <button
+                        onClick={() => {
+                          const targetSheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId) || cuttingSheets[0];
+                          if (targetSheet) {
+                            setSymmetryAxisX(Math.round(targetSheet.x + targetSheet.width / 2));
+                          }
+                        }}
+                        className="flex-1 py-1 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-sky-300 rounded transition-all truncate px-1"
+                        title="Align mirror axis to center of active cutting sheet"
+                      >
+                        Sheet Center
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSymmetryAxisX(500)}
+                      className="py-1 px-1.5 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 rounded transition-all"
+                      title="Reset mirror axis to default (500px)"
+                    >
+                      500px
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Tool Grid */}
@@ -3726,125 +4293,6 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   </button>
                 )}
               </div>
-
-              {/* Mirror Tool (Symmetry) */}
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => setSymmetryEnabled(!symmetryEnabled)}
-                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-semibold transition-all border ${
-                    symmetryEnabled
-                      ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-gold-sm'
-                      : 'bg-slate-800/40 border-slate-700/60 text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="Mirror Tool: Replicates drawing strokes symmetrically across the centerline. Can be moved freely to any position."
-                >
-                  <span className="flex items-center gap-1.5">
-                    <FlipHorizontal className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Mirror Tool (Symmetry)</span>
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800">
-                    {symmetryEnabled ? 'ON' : 'OFF'}
-                  </span>
-                </button>
-
-                {/* Moveable Mirror Position Controls */}
-                {symmetryEnabled && (
-                  <div className="p-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-2 text-xs">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                        <Move className="w-3 h-3" />
-                        <span>Move Mirror Axis</span>
-                      </span>
-                      <span className="font-mono font-bold text-amber-300 bg-slate-900/80 px-1.5 py-0.5 rounded border border-amber-500/30">
-                        X: {symmetryAxisX}px
-                      </span>
-                    </div>
-
-                    {/* Free Position Slider */}
-                    <input
-                      type="range"
-                      min="50"
-                      max="2500"
-                      step="5"
-                      value={symmetryAxisX}
-                      onChange={(e) => setSymmetryAxisX(Number(e.target.value))}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-ew-resize accent-amber-400"
-                      title="Slide to move mirror axis freely across workspace"
-                    />
-
-                    {/* Fine Nudge Directional Buttons */}
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-mono">
-                      <button
-                        onClick={() => setSymmetryAxisX((x) => Math.max(20, x - 50))}
-                        className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
-                        title="Shift Left 50px"
-                      >
-                        -50px
-                      </button>
-                      <button
-                        onClick={() => setSymmetryAxisX((x) => Math.max(20, x - 10))}
-                        className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
-                        title="Shift Left 10px"
-                      >
-                        -10px
-                      </button>
-                      <button
-                        onClick={() => setSymmetryAxisX((x) => Math.min(3800, x + 10))}
-                        className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
-                        title="Shift Right 10px"
-                      >
-                        +10px
-                      </button>
-                      <button
-                        onClick={() => setSymmetryAxisX((x) => Math.min(3800, x + 50))}
-                        className="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-all text-center"
-                        title="Shift Right 50px"
-                      >
-                        +50px
-                      </button>
-                    </div>
-
-                    {/* Quick Alignment Presets */}
-                    <div className="flex items-center gap-1 pt-1 border-t border-amber-500/20">
-                      <button
-                        onClick={() => {
-                          const centerX = Math.round((-panOffset.x + (typeof window !== 'undefined' ? window.innerWidth / 2 : 500)) / zoom);
-                          setSymmetryAxisX(Math.max(20, centerX));
-                        }}
-                        className="flex-1 py-1 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-amber-300 rounded transition-all truncate px-1"
-                        title="Align mirror axis to center of current view"
-                      >
-                        Center Screen
-                      </button>
-                      {cuttingSheets.length > 0 && (
-                        <button
-                          onClick={() => {
-                            const targetSheet = cuttingSheets.find((s) => s.id === selectedCuttingSheetId) || cuttingSheets[0];
-                            if (targetSheet) {
-                              setSymmetryAxisX(Math.round(targetSheet.x + targetSheet.width / 2));
-                            }
-                          }}
-                          className="flex-1 py-1 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-sky-300 rounded transition-all truncate px-1"
-                          title="Align mirror axis to center of active cutting sheet"
-                        >
-                          Sheet Center
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setSymmetryAxisX(500)}
-                        className="py-1 px-1.5 text-center text-[9px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 rounded transition-all"
-                        title="Reset mirror axis to default (500px)"
-                      >
-                        500px
-                      </button>
-                    </div>
-
-                    <div className="text-[9px] text-amber-300/80 leading-tight">
-                      💡 You can also drag the golden axis line or handle directly on the workspace to position freely.
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Color Palette */}
@@ -3889,7 +4337,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         {/* COMPACT FLOATING LAYER PANEL (Autodesk Sketchbook Style)                */}
         {/* ======================================================================= */}
         {showLayerPanel && (
-          <div className="absolute top-4 right-4 z-40 bg-[#0d1322]/95 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-2xl w-84 max-w-[92vw] max-h-[75vh] overflow-y-auto text-slate-100 flex flex-col gap-3">
+          <div className="absolute top-4 right-4 z-50 bg-[#0d1322]/95 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-2xl w-84 max-w-[92vw] max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col gap-3">
             {/* Header with bold uppercase styling and explicit close button */}
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
               <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
@@ -4069,12 +4517,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[9px] font-mono uppercase tracking-wider text-amber-400/80">
-                                {isSheetLayer
-                                  ? `Sheet Layer • (${layerElements.length} sub-layers)`
-                                  : layer.isGroup
-                                  ? `Merged Group (${layer.mergedCount} layers)`
-                                  : `${layer.bodiceType} • (${layerElements.length} sub-layers)`}
+                              <span className="text-[9px] font-mono uppercase tracking-wider text-amber-400/90 block">
+                                {(() => {
+                                  const matchingSheet = cuttingSheets.find(
+                                    (s) => s.layerId === layer.id || s.id === layer.sheetId || `layer_sheet_${s.id}` === layer.id
+                                  );
+                                  if (matchingSheet) {
+                                    return `Sheet: ${matchingSheet.name || 'Cut Sheet'} • (${layerElements.length} elements)`;
+                                  }
+                                  if (layer.isGroup) {
+                                    return `Merged Group (${layer.mergedCount} layers)`;
+                                  }
+                                  return `Root Canvas • ${layer.bodiceType || 'Vector'} (${layerElements.length} elements)`;
+                                })()}
                               </span>
                             </div>
                           )}
@@ -4507,6 +4962,37 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </div>
           )}
 
+          {/* FULL SCREEN INFINITE DRAFTING GRID (Covers 100% of Viewport on Mobile & Desktop) */}
+          {activeSubTab === 'drafting' && (
+            <svg
+              className="w-full h-full absolute inset-0 z-0 pointer-events-none"
+              style={{ width: '100%', height: '100%' }}
+            >
+              <defs>
+                <pattern
+                  id="fullscreenDraftingGridSmall"
+                  width={20 * zoom}
+                  height={20 * zoom}
+                  patternUnits="userSpaceOnUse"
+                  patternTransform={`translate(${panOffset.x}, ${panOffset.y})`}
+                >
+                  <path d={`M ${20 * zoom} 0 L 0 0 0 ${20 * zoom}`} fill="none" stroke="#1e293b" strokeWidth="0.75" />
+                </pattern>
+                <pattern
+                  id="fullscreenDraftingGridMajor"
+                  width={100 * zoom}
+                  height={100 * zoom}
+                  patternUnits="userSpaceOnUse"
+                  patternTransform={`translate(${panOffset.x}, ${panOffset.y})`}
+                >
+                  <rect width={100 * zoom} height={100 * zoom} fill="url(#fullscreenDraftingGridSmall)" />
+                  <path d={`M ${100 * zoom} 0 L 0 0 0 ${100 * zoom}`} fill="none" stroke="#334155" strokeWidth="1.5" />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#fullscreenDraftingGridMajor)" />
+            </svg>
+          )}
+
           {/* SVG Vector Drawing & Bodice Placement Plane */}
           <svg
             ref={canvasSvgRef}
@@ -4514,24 +5000,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             style={{
               transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
               transformOrigin: '0 0',
+              overflow: 'visible',
             }}
           >
-            <defs>
-              {/* Grid Mat for Pattern Drafting Board */}
-              <pattern id="draftingGrid" width="20" height="20" patternUnits="userSpaceOnUse">
-                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1e293b" strokeWidth="0.75" />
-              </pattern>
-              <pattern id="majorGrid" width="100" height="100" patternUnits="userSpaceOnUse">
-                <rect width="100" height="100" fill="url(#draftingGrid)" />
-                <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#334155" strokeWidth="1.5" />
-              </pattern>
-            </defs>
-
-            {/* Grid for Pattern Drafting Board (Canvas Background) */}
-            {activeSubTab === 'drafting' && (
-              <rect width="4000" height="3000" fill="url(#majorGrid)" />
-            )}
-
             {/* PLAIN CUTTING SHEETS CANVAS PLANE (Solid Color, Strictly NO Grid Lines, Direct Drawing Surface) */}
             {activeSubTab === 'drafting' &&
               cuttingSheets.map((sheet) => {
@@ -4647,98 +5118,138 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 );
               })}
 
-            {/* Center Mirror Symmetry Line if active (Freely Moveable Workspace Axis) */}
-            {symmetryEnabled && (
-              <g id="symmetry-mirror-axis">
-                {/* Wide transparent interactive hit target for easy drag & move anywhere across workspace */}
-                <line
-                  x1={symmetryAxisX}
-                  y1="0"
-                  x2={symmetryAxisX}
-                  y2="3200"
-                  stroke="transparent"
-                  strokeWidth="32"
-                  className="cursor-ew-resize pointer-events-auto"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setIsDraggingMirrorAxis(true);
-                  }}
-                  title={`Drag to shift Mirror Axis (X: ${symmetryAxisX}px)`}
-                />
-                {/* Visual dashed golden mirror axis line */}
-                <line
-                  x1={symmetryAxisX}
-                  y1="0"
-                  x2={symmetryAxisX}
-                  y2="3200"
-                  stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
-                  strokeWidth={isDraggingMirrorAxis ? 3 : 2}
-                  strokeDasharray="6 4"
-                  className="pointer-events-none"
-                />
+            {/* Center Mirror Symmetry Line if active (Spans continuously from top to bottom of screen) */}
+            {symmetryEnabled && (() => {
+              const vpHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+              const vpTopY = (-panOffset.y + 24) / zoom;
+              const vpMidY = (-panOffset.y + vpHeight / 2) / zoom;
+              const vpBottomY = (-panOffset.y + vpHeight - 90) / zoom;
 
-                {/* Top Draggable Handle Pill */}
-                <g
-                  className="cursor-ew-resize pointer-events-auto select-none"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setIsDraggingMirrorAxis(true);
-                  }}
-                >
-                  <rect
-                    x={symmetryAxisX - 95}
-                    y="14"
-                    width="190"
-                    height="28"
-                    rx="14"
-                    fill="#090d16"
-                    stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
-                    strokeWidth="2"
-                    filter="drop-shadow(0 2px 6px rgba(0,0,0,0.5))"
+              return (
+                <g id="symmetry-mirror-axis">
+                  {/* Wide transparent interactive hit target spanning from top to bottom of screen */}
+                  <line
+                    x1={symmetryAxisX}
+                    y1="-100000"
+                    x2={symmetryAxisX}
+                    y2="100000"
+                    stroke="transparent"
+                    strokeWidth="36"
+                    className="cursor-ew-resize pointer-events-auto"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setIsDraggingMirrorAxis(true);
+                    }}
+                    title={`Drag to shift Mirror Axis (X: ${symmetryAxisX}px)`}
                   />
-                  <circle cx={symmetryAxisX - 78} cy="28" r="4" fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'} />
-                  <text
-                    x={symmetryAxisX + 6}
-                    y="32"
-                    fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
-                    fontSize="10"
-                    fontFamily="monospace"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    ⇄ MIRROR AXIS ({symmetryAxisX}px)
-                  </text>
-                </g>
+                  {/* Visual dashed golden mirror axis line from top to bottom */}
+                  <line
+                    x1={symmetryAxisX}
+                    y1="-100000"
+                    x2={symmetryAxisX}
+                    y2="100000"
+                    stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                    strokeWidth={isDraggingMirrorAxis ? 3 : 2}
+                    strokeDasharray="6 4"
+                    className="pointer-events-none"
+                  />
 
-                {/* Mid-canvas floating circle handle */}
-                <g
-                  className="cursor-ew-resize pointer-events-auto select-none"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setIsDraggingMirrorAxis(true);
-                  }}
-                >
-                  <circle
-                    cx={symmetryAxisX}
-                    cy="280"
-                    r="15"
-                    fill="#090d16"
-                    stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
-                    strokeWidth="2"
-                  />
-                  <text
-                    x={symmetryAxisX}
-                    y="284"
-                    fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
-                    fontSize="12"
-                    fontWeight="bold"
-                    textAnchor="middle"
+                  {/* Top Viewport Handle Pill (always positioned at the top of the visible screen) */}
+                  <g
+                    className="cursor-ew-resize pointer-events-auto select-none"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setIsDraggingMirrorAxis(true);
+                    }}
                   >
-                    ⇄
-                  </text>
+                    <rect
+                      x={symmetryAxisX - 95}
+                      y={vpTopY}
+                      width="190"
+                      height="28"
+                      rx="14"
+                      fill="#090d16"
+                      stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      strokeWidth="2"
+                      filter="drop-shadow(0 2px 6px rgba(0,0,0,0.5))"
+                    />
+                    <circle cx={symmetryAxisX - 78} cy={vpTopY + 14} r="4" fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'} />
+                    <text
+                      x={symmetryAxisX + 6}
+                      y={vpTopY + 18}
+                      fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      fontSize="10"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      ⇄ MIRROR AXIS ({symmetryAxisX}px)
+                    </text>
+                  </g>
+
+                  {/* Mid-canvas floating circle handle (always positioned at middle of screen) */}
+                  <g
+                    className="cursor-ew-resize pointer-events-auto select-none"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setIsDraggingMirrorAxis(true);
+                    }}
+                  >
+                    <circle
+                      cx={symmetryAxisX}
+                      cy={vpMidY}
+                      r="16"
+                      fill="#090d16"
+                      stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      strokeWidth="2"
+                      filter="drop-shadow(0 2px 4px rgba(0,0,0,0.5))"
+                    />
+                    <text
+                      x={symmetryAxisX}
+                      y={vpMidY + 4}
+                      fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      fontSize="12"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      ⇄
+                    </text>
+                  </g>
+
+                  {/* Bottom Viewport Handle Pill (always visible near bottom of screen) */}
+                  <g
+                    className="cursor-ew-resize pointer-events-auto select-none"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setIsDraggingMirrorAxis(true);
+                    }}
+                  >
+                    <rect
+                      x={symmetryAxisX - 60}
+                      y={vpBottomY}
+                      width="120"
+                      height="24"
+                      rx="12"
+                      fill="#090d16"
+                      stroke={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      strokeWidth="2"
+                      filter="drop-shadow(0 2px 6px rgba(0,0,0,0.5))"
+                    />
+                    <text
+                      x={symmetryAxisX}
+                      y={vpBottomY + 16}
+                      fill={isDraggingMirrorAxis ? '#38bdf8' : '#facc15'}
+                      fontSize="10"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      ⇄ MIRROR
+                    </text>
+                  </g>
                 </g>
-              </g>
-            )}
+              );
+            })()}
 
             {/* RENDER ALL VISIBLE LAYERS (Pattern Drafting Board) */}
             {activeSubTab === 'drafting' &&
@@ -4746,18 +5257,35 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 if (!layer.visible) return null;
                 const isCurrentActive = layer.id === activeLayerId;
 
-                // Identify if this layer belongs to an active Cutting Sheet with Mirror enabled
+                // Identify if this layer belongs to an active Cutting Sheet
                 const matchingSheet = cuttingSheets.find(
                   (s) => s.id === layer.sheetId || s.layerId === layer.id || `layer_sheet_${s.id}` === layer.id
                 );
-                const isSheetMirrored = matchingSheet?.isMirrored;
-                const sheetFoldX = matchingSheet ? matchingSheet.x + matchingSheet.width : null;
+
+                // If parent sheet is hidden, hide all drawings belonging to it
+                if (matchingSheet && matchingSheet.visible === false) {
+                  return null;
+                }
+
+                const isSheetMirrored = Boolean(matchingSheet?.isMirrored);
+                const effW = matchingSheet
+                  ? matchingSheet.isMirrored
+                    ? matchingSheet.width * 2
+                    : matchingSheet.width
+                  : 0;
+                const effH = matchingSheet ? matchingSheet.height : 0;
+                const localFoldX = matchingSheet ? matchingSheet.width : null;
+
+                // Group transform: sheet layer locks to sheet position and rotation; root canvas uses layer offset
+                const groupTransform = matchingSheet
+                  ? `translate(${matchingSheet.x}, ${matchingSheet.y}) rotate(${matchingSheet.rotation || 0}, ${effW / 2}, ${effH / 2})`
+                  : `translate(${layer.offsetX || 0}, ${layer.offsetY || 0}) rotate(${layer.rotation || 0})`;
 
                 return (
                   <g
                     key={layer.id}
                     id={`layer-group-${layer.id}`}
-                    transform={`translate(${layer.offsetX}, ${layer.offsetY}) rotate(${layer.rotation})`}
+                    transform={groupTransform}
                     opacity={layer.opacity}
                   >
                     {/* Bodice Piece Geometry (if attached to layer) */}
@@ -4820,23 +5348,13 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                     {layer.elements.map((el) => {
                       if (el.visible === false) return null;
                       const isSelected = selectedElementId === el.id;
-                      const isSheetLayer = Boolean(
-                        layer.sheetId ||
-                        cuttingSheets.some(
-                          (s) => s.layerId === layer.id || s.id === layer.sheetId || `layer_sheet_${s.id}` === layer.id
-                        )
-                      );
+                      const isSheetLayer = Boolean(matchingSheet);
 
                       if (el.tool !== 'dart_marker') {
                         // Freehand chalk/pen/scissors/ruler stroke
                         const points = el.points || [];
                         const pathStr = points.length > 0
-                          ? renderPointsToPath(
-                              points.map((pt) => ({
-                                x: pt.x - (layer.offsetX || 0),
-                                y: pt.y - (layer.offsetY || 0),
-                              }))
-                            )
+                          ? renderPointsToPath(points)
                           : el.pathData || '';
 
                         return (
@@ -4853,7 +5371,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                 strokeLinejoin="round"
                               />
                             )}
-                            {/* Stroke on Sheet */}
+                            {/* Stroke on Sheet / Canvas */}
                             <path
                               d={pathStr}
                               fill="none"
@@ -4874,12 +5392,31 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             />
 
                             {/* Cutting Sheet Mirrored Reflection (if sheet has book-fold mirror active) */}
-                            {isSheetMirrored && sheetFoldX != null && points.length > 0 && !el.isMirroredCopy && (
+                            {isSheetMirrored && localFoldX != null && points.length > 0 && !el.isMirroredCopy && (
                               <path
                                 d={renderPointsToPath(
                                   points.map((pt) => ({
-                                    x: 2 * sheetFoldX - pt.x - (layer.offsetX || 0),
-                                    y: pt.y - (layer.offsetY || 0),
+                                    x: 2 * localFoldX - pt.x,
+                                    y: pt.y,
+                                  }))
+                                )}
+                                fill="none"
+                                stroke={el.color}
+                                strokeWidth={el.size}
+                                strokeDasharray={el.tool === 'scissors' || el.dashed ? '6 4' : 'none'}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                opacity={0.88}
+                              />
+                            )}
+
+                            {/* Root Canvas Mirrored Reflection (if symmetry is enabled) */}
+                            {!matchingSheet && symmetryEnabled && typeof symmetryAxisX === 'number' && points.length > 0 && !el.isMirroredCopy && (
+                              <path
+                                d={renderPointsToPath(
+                                  points.map((pt) => ({
+                                    x: 2 * (symmetryAxisX - (layer.offsetX || 0)) - pt.x,
+                                    y: pt.y,
                                   }))
                                 )}
                                 fill="none"
@@ -4898,13 +5435,16 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       if (el.tool === 'dart_marker') {
                         const dartRadius = zoom >= 1.5 ? 2.5 : zoom >= 0.8 ? 1.8 : 1.2;
                         const dartStrokeWidth = Math.min(1.4, Math.max(0.7, (el.size || 1) * Math.min(1, zoom)));
+                        const apexX = el.apex.x;
+                        const apexY = el.apex.y;
+
                         return (
                           <g key={el.id}>
                             {/* Selected Halo for Dart */}
                             {isSelected && (
                               <circle
-                                cx={el.apex.x - layer.offsetX}
-                                cy={el.apex.y - layer.offsetY}
+                                cx={apexX}
+                                cy={apexY}
                                 r="6"
                                 fill="none"
                                 stroke="#f59e0b"
@@ -4925,18 +5465,18 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                                 }
                               }}
                             >
-                              <circle cx={el.apex.x - layer.offsetX} cy={el.apex.y - layer.offsetY} r={dartRadius} fill={el.color} />
+                              <circle cx={apexX} cy={apexY} r={dartRadius} fill={el.color} />
                               <polyline
                                 points={el.legs
-                                  .map((pt) => `${pt.x - layer.offsetX},${pt.y - layer.offsetY}`)
+                                  .map((pt) => `${pt.x},${pt.y}`)
                                   .join(' ')}
                                 fill="none"
                                 strokeDasharray="3 2"
                               />
                               {zoom >= 0.85 && (
                                 <text
-                                  x={el.apex.x - layer.offsetX + 5}
-                                  y={el.apex.y - layer.offsetY + 3}
+                                  x={apexX + 5}
+                                  y={apexY + 3}
                                   fill={el.color}
                                   fontSize="7"
                                   fontFamily="monospace"
@@ -4948,25 +5488,25 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                             </g>
 
                             {/* Cutting Sheet Mirrored Flipped Dart */}
-                            {isSheetMirrored && sheetFoldX != null && (
+                            {isSheetMirrored && localFoldX != null && (
                               <g stroke={el.color} strokeWidth={dartStrokeWidth} opacity={0.88}>
                                 <circle
-                                  cx={2 * sheetFoldX - el.apex.x - layer.offsetX}
-                                  cy={el.apex.y - layer.offsetY}
+                                  cx={2 * localFoldX - apexX}
+                                  cy={apexY}
                                   r={dartRadius}
                                   fill={el.color}
                                 />
                                 <polyline
                                   points={el.legs
-                                    .map((pt) => `${2 * sheetFoldX - pt.x - layer.offsetX},${pt.y - layer.offsetY}`)
+                                    .map((pt) => `${2 * localFoldX - pt.x},${pt.y}`)
                                     .join(' ')}
                                   fill="none"
                                   strokeDasharray="3 2"
                                 />
                                 {zoom >= 0.85 && (
                                   <text
-                                    x={2 * sheetFoldX - el.apex.x - layer.offsetX - 5}
-                                    y={el.apex.y - layer.offsetY + 3}
+                                    x={2 * localFoldX - apexX - 5}
+                                    y={apexY + 3}
                                     fill={el.color}
                                     fontSize="7"
                                     fontFamily="monospace"
@@ -5317,7 +5857,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               onDuplicate={() => handleDuplicateCuttingSheet(sheet.id)}
               onRemove={() => handleRemoveCuttingSheet(sheet.id)}
               onAddSeamAllowanceStroke={(points, label) => {
-                const layer = ensureActiveLayer();
+                const layer = ensureActiveLayer({ x: sheet.x + 10, y: sheet.y + 10 });
                 const stroke = {
                   id: `stroke_seam_${Date.now()}`,
                   tool: 'seam_allowance',
@@ -5329,6 +5869,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   opacity: 0.95,
                   pathData: renderPointsToPath(points),
                   label: label || '5/8" Seam Allowance',
+                  parentSheetId: sheet.id,
+                  targetLayerId: layer.id,
                 };
                 setLayers((prev) =>
                   prev.map((l) => (l.id === layer.id ? { ...l, elements: [...l.elements, stroke] } : l))
@@ -5368,49 +5910,86 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         {/* TOPPING ACTIVE DRAWING STROKE LAYER (Renders ABOVE rulers)              */}
         {/* Guarantees lines drawn along rulers are 100% visible on top of ruler    */}
         {/* ======================================================================= */}
-        {currentStroke && (
-          <svg
-            className="w-full h-full absolute inset-0 z-45 pointer-events-none select-none"
-            style={{
-              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
-              transformOrigin: '0 0',
-            }}
-          >
-            <path
-              d={renderPointsToPath(currentStroke.points)}
-              fill="none"
-              stroke={currentStroke.color || '#38bdf8'}
-              strokeWidth={currentStroke.size || 2}
-              strokeOpacity={1}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray={currentStroke.tool === 'scissors' ? '6 4' : 'none'}
-            />
-            {/* Real-time Mirrored Stroke Reflection while drawing */}
-            {symmetryEnabled && typeof symmetryAxisX === 'number' && currentStroke.points?.length > 0 && (
-              <path
-                d={renderPointsToPath(
-                  currentStroke.points.map((pt) => ({
-                    x: 2 * symmetryAxisX - pt.x,
-                    y: pt.y,
-                  }))
+        {currentStroke && (() => {
+          const strokeSheet = currentStroke.parentSheetId
+            ? cuttingSheets.find((s) => s.id === currentStroke.parentSheetId)
+            : null;
+          const effW = strokeSheet ? (strokeSheet.isMirrored ? strokeSheet.width * 2 : strokeSheet.width) : 0;
+          const effH = strokeSheet ? strokeSheet.height : 0;
+          const strokeLayer = !strokeSheet && currentStroke.targetLayerId
+            ? layers.find((l) => l.id === currentStroke.targetLayerId)
+            : null;
+          const strokeTransform = strokeSheet
+            ? `translate(${strokeSheet.x}, ${strokeSheet.y}) rotate(${strokeSheet.rotation || 0}, ${effW / 2}, ${effH / 2})`
+            : strokeLayer
+            ? `translate(${strokeLayer.offsetX || 0}, ${strokeLayer.offsetY || 0}) rotate(${strokeLayer.rotation || 0})`
+            : undefined;
+
+          return (
+            <svg
+              className="w-full h-full absolute inset-0 z-20 pointer-events-none select-none"
+              style={{
+                transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+                transformOrigin: '0 0',
+                overflow: 'visible',
+              }}
+            >
+              <g transform={strokeTransform}>
+                <path
+                  d={renderPointsToPath(currentStroke.points)}
+                  fill="none"
+                  stroke={currentStroke.color || '#38bdf8'}
+                  strokeWidth={currentStroke.size || 2}
+                  strokeOpacity={1}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray={currentStroke.tool === 'scissors' || currentStroke.dashed ? '6 4' : 'none'}
+                />
+                {/* Real-time Mirrored Stroke Reflection on sheet while drawing */}
+                {strokeSheet?.isMirrored && currentStroke.points?.length > 0 && (
+                  <path
+                    d={renderPointsToPath(
+                      currentStroke.points.map((pt) => ({
+                        x: 2 * strokeSheet.width - pt.x,
+                        y: pt.y,
+                      }))
+                    )}
+                    fill="none"
+                    stroke={currentStroke.color || '#38bdf8'}
+                    strokeWidth={currentStroke.size || 2}
+                    strokeOpacity={0.85}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray={currentStroke.tool === 'scissors' || currentStroke.dashed ? '6 4' : 'none'}
+                  />
                 )}
-                fill="none"
-                stroke={currentStroke.color || '#38bdf8'}
-                strokeWidth={currentStroke.size || 2}
-                strokeOpacity={0.85}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeDasharray={currentStroke.tool === 'scissors' ? '6 4' : 'none'}
-              />
-            )}
-          </svg>
-        )}
+                {/* Real-time Mirrored Stroke Reflection on root canvas while drawing */}
+                {!strokeSheet && symmetryEnabled && typeof symmetryAxisX === 'number' && currentStroke.points?.length > 0 && (
+                  <path
+                    d={renderPointsToPath(
+                      currentStroke.points.map((pt) => ({
+                        x: 2 * (symmetryAxisX - (strokeLayer?.offsetX || 0)) - pt.x,
+                        y: pt.y,
+                      }))
+                    )}
+                    fill="none"
+                    stroke={currentStroke.color || '#38bdf8'}
+                    strokeWidth={currentStroke.size || 2}
+                    strokeOpacity={0.85}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray={currentStroke.tool === 'scissors' || currentStroke.dashed ? '6 4' : 'none'}
+                  />
+                )}
+              </g>
+            </svg>
+          );
+        })()}
 
         {/* Magnetic Edge Snapping Visual Ping Indicator */}
         {activeSnapPoint && activeSnapPoint.snapped && (
           <div
-            className="pointer-events-none fixed z-50 flex items-center gap-1.5 transition-all duration-75 select-none"
+            className="pointer-events-none fixed z-30 flex items-center gap-1.5 transition-all duration-75 select-none"
             style={{
               left: `${activeSnapPoint.x * zoom + panOffset.x}px`,
               top: `${activeSnapPoint.y * zoom + panOffset.y}px`,
@@ -5596,7 +6175,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         {/* PERSISTENT ZOOM-SAFE FLOATING TOGGLES DOCK                              */}
         {/* Always visible on screen so sheet & ruler options are never hidden away */}
         {/* ======================================================================= */}
-        <div className="fixed top-4 right-4 z-40 flex items-center gap-2 select-none">
+        <div className="hidden md:flex fixed top-16 right-4 z-30 items-center gap-2 select-none">
           {/* Sheet Options Persistent Button */}
           {cuttingSheets.length > 0 && (
             <div className="relative">

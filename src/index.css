@@ -109,19 +109,32 @@ body {
   transition: transform 0.1s ease-in-out;
 }
 
-/* Custom Scrollbar for Studio Drawers */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Drawer Smooth Scrolling Effect */
+.drawer-scroll-effect {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 rgba(15, 23, 42, 0.5);
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+
+.drawer-scroll-effect::-webkit-scrollbar {
+  width: 5px;
 }
-::-webkit-scrollbar-thumb {
-  background: #334155;
+
+.drawer-scroll-effect::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
   border-radius: 9999px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+
+.drawer-scroll-effect::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+.drawer-scroll-effect::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
 }
 

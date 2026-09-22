@@ -50,6 +50,7 @@ import {
   CheckCircle2,
   Hand,
   Pipette,
+  Sliders,
   SlidersHorizontal,
   Save,
   Copy,
@@ -150,7 +151,12 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   const containerRef = useRef(null);
   const tableBenchRef = useRef(null);
   const twoFingerStartRef = useRef(null);
-  const [tableZoom, setTableZoom] = useState(0.75);
+  const [tableZoom, setTableZoom] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return 0.5;
+    }
+    return 0.75;
+  });
   const [tablePanOffset, setTablePanOffset] = useState({ x: 0, y: 0 });
   const [isTablePanning, setIsTablePanning] = useState(false);
   const tablePanStartRef = useRef({ x: 0, y: 0 });
@@ -700,16 +706,15 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
       setEffectiveRackSize({ width: TABLE_WIDTH, height: TABLE_HEIGHT });
       return;
     }
-    const availW = Math.max(200, (containerRef.current?.clientWidth || window.innerWidth) - 24);
-    const availH = Math.max(150, (containerRef.current?.clientHeight || (window.innerHeight - 60)) - 24);
-    const rackAspect = TABLE_WIDTH / TABLE_HEIGHT; // 1.8333
+    const availW = Math.max(260, (containerRef.current?.clientWidth || window.innerWidth) - 16);
+    const availH = Math.max(280, (containerRef.current?.clientHeight || (window.innerHeight - 56)) - 16);
+    const rackAspect = availW > availH ? (TABLE_WIDTH / TABLE_HEIGHT) : Math.max(0.68, Math.min(0.88, availW / availH));
     let fitW = availW;
-    let fitH = fitW / rackAspect;
+    let fitH = Math.min(availH, Math.round(fitW / rackAspect));
     if (fitH > availH) {
       fitH = availH;
-      fitW = fitH * rackAspect;
+      fitW = Math.round(fitH * rackAspect);
     }
-    // At baseline scale 0.5 (50%), rendered size = (fitW / 0.5) * 0.5 = fitW, fitH
     const unscaledW = Math.round(fitW / 0.5);
     const unscaledH = Math.round(fitH / 0.5);
     setEffectiveRackSize({ width: unscaledW, height: unscaledH });
@@ -728,18 +733,33 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
   }, [getMinZoom]);
 
   const centerAndFitTable = useCallback(() => {
-    updateEffectiveRackSize();
+    const isMobile = (containerRef.current?.clientWidth || window.innerWidth) < 768;
+    let logicalW = TABLE_WIDTH;
+    let logicalH = TABLE_HEIGHT;
+
+    if (isMobile) {
+      const availW = Math.max(260, (containerRef.current?.clientWidth || window.innerWidth) - 16);
+      const availH = Math.max(280, (containerRef.current?.clientHeight || (window.innerHeight - 56)) - 16);
+      const rackAspect = availW > availH ? (TABLE_WIDTH / TABLE_HEIGHT) : Math.max(0.68, Math.min(0.88, availW / availH));
+      let fitW = availW;
+      let fitH = Math.min(availH, Math.round(fitW / rackAspect));
+      if (fitH > availH) {
+        fitH = availH;
+        fitW = Math.round(fitH * rackAspect);
+      }
+      logicalW = Math.round(fitW / 0.5);
+      logicalH = Math.round(fitH / 0.5);
+    }
+
+    setEffectiveRackSize({ width: logicalW, height: logicalH });
     const minZ = getMinZoom();
     setTableZoom(minZ);
     setTablePanOffset({ x: 0, y: 0 });
     setFabricConfig((prev) => {
-      const isMobile = (containerRef.current?.clientWidth || window.innerWidth) < 768;
-      const tW = isMobile ? effectiveRackSize.width : TABLE_WIDTH;
-      const tH = isMobile ? effectiveRackSize.height : TABLE_HEIGHT;
-      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, tW, tH);
+      const geom = calculateContainedFabricGeometry(prev.widthInches, prev.lengthInches, logicalW, logicalH);
       return { ...prev, ...geom };
     });
-  }, [getMinZoom, updateEffectiveRackSize, effectiveRackSize.width, effectiveRackSize.height, TABLE_WIDTH, TABLE_HEIGHT]);
+  }, [getMinZoom, calculateContainedFabricGeometry, TABLE_WIDTH, TABLE_HEIGHT]);
 
   useEffect(() => {
     centerAndFitTable();
@@ -2985,7 +3005,12 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
             className="w-full h-full rounded-2xl border-8 border-[#3d2b1c] shadow-[0_30px_70px_rgba(0,0,0,0.9)] relative overflow-hidden flex flex-col"
             style={{
               backgroundColor: '#182921', // Classic self-healing green atelier cutting mat
-              backgroundImage: `
+              backgroundImage: (tableZoom <= 0.5 || availableWidth < 768) ? `
+                linear-gradient(to right, rgba(255,255,255,0.038) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.038) 1px, transparent 1px),
+                linear-gradient(to right, rgba(255,255,255,0.015) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.015) 1px, transparent 1px)
+              ` : `
                 linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
                 linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px),
                 linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
@@ -3772,6 +3797,77 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
                     </g>
                   );
                 })}
+
+              {/* Tape Measure Overlay on Cutting Table without instructional text */}
+              {tableTapeMeasure.start && (
+                <g id="table-tape-measure-overlay">
+                  <circle
+                    cx={tableTapeMeasure.start.x}
+                    cy={tableTapeMeasure.start.y}
+                    r="5"
+                    fill="#f59e0b"
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                  />
+                  {tableTapeMeasure.end && (
+                    <>
+                      <line
+                        x1={tableTapeMeasure.start.x}
+                        y1={tableTapeMeasure.start.y}
+                        x2={tableTapeMeasure.end.x}
+                        y2={tableTapeMeasure.end.y}
+                        stroke="#f59e0b"
+                        strokeWidth="2"
+                        strokeDasharray="5 3"
+                      />
+                      <circle
+                        cx={tableTapeMeasure.end.x}
+                        cy={tableTapeMeasure.end.y}
+                        r="5"
+                        fill="#f59e0b"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                      />
+                      {(() => {
+                        const midX = (tableTapeMeasure.start.x + tableTapeMeasure.end.x) / 2;
+                        const midY = (tableTapeMeasure.start.y + tableTapeMeasure.end.y) / 2;
+                        const distInches = (Math.hypot(tableTapeMeasure.end.x - tableTapeMeasure.start.x, tableTapeMeasure.end.y - tableTapeMeasure.start.y) / 20).toFixed(1);
+                        const distCm = (parseFloat(distInches) * 2.54).toFixed(1);
+                        return (
+                          <g
+                            transform={`translate(${midX}, ${midY - 14})`}
+                            className="cursor-pointer"
+                            onClick={() => setTableTapeMeasure({ start: null, end: null, active: false })}
+                          >
+                            <rect
+                              x="-52"
+                              y="-12"
+                              width="104"
+                              height="24"
+                              rx="6"
+                              fill="#0d1322"
+                              fillOpacity="0.94"
+                              stroke="#f59e0b"
+                              strokeWidth="1.5"
+                            />
+                            <text
+                              x="0"
+                              y="4"
+                              fill="#fbbf24"
+                              fontSize="11"
+                              fontWeight="bold"
+                              textAnchor="middle"
+                              fontFamily="monospace"
+                            >
+                              {distInches}" ({distCm}cm)
+                            </text>
+                          </g>
+                        );
+                      })()}
+                    </>
+                  )}
+                </g>
+              )}
             </svg>
           </div>
         </div>

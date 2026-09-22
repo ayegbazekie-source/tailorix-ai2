@@ -57,19 +57,19 @@ export default function DraftingToolboxDrawer({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md bg-[#090d16]/98 border-l border-amber-500/40 shadow-2xl flex flex-col h-full text-slate-100 animate-in slide-in-from-right duration-250"
+        className="w-full max-w-md bg-[#090d16]/98 border-l border-amber-500/30 shadow-2xl flex flex-col h-full text-slate-100 animate-in slide-in-from-right duration-250"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
         <div className="p-4 border-b border-slate-800/90 flex items-center justify-between bg-slate-950/60">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shadow-gold-sm">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
               <Compass className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
                 <span>Tailor's Physical Ruler Toolbox</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
                   8 Calibrated Vector Curves
                 </span>
               </h2>
@@ -207,7 +207,7 @@ export default function DraftingToolboxDrawer({
         </div>
 
         {/* Ruler Catalog List */}
-        <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar">
+        <div className="flex-1 drawer-scroll-effect p-3.5 space-y-3 touch-pan-y">
           {TAILOR_RULER_LIST.map((tool) => {
             const activeInstance = activeRulers.find((r) => r.type === tool.id);
             const isPlaced = Boolean(activeInstance);

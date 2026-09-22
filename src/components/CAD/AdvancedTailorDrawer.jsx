@@ -29,17 +29,23 @@ export default function AdvancedTailorDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="w-full max-w-md bg-[#131417] border-l border-[#26282E] h-full flex flex-col shadow-2xl text-slate-100 select-none">
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md bg-[#131417] border-l border-[#26282E] h-full flex flex-col shadow-2xl text-slate-100 select-none animate-in slide-in-from-right duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         
         {/* Drawer Header */}
         <div className="p-4 border-b border-[#23252A] flex items-center justify-between bg-[#16171B]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center font-bold">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center font-medium">
               <Sliders className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
                 Advanced Tailor Options
               </h3>
               <p className="text-[11px] text-slate-400">
@@ -56,7 +62,7 @@ export default function AdvancedTailorDrawer({
         </div>
 
         {/* Drawer Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-5 text-xs">
+        <div className="flex-1 drawer-scroll-effect p-4 space-y-5 text-xs touch-pan-y">
           
           {/* Section 1: Industrial CAD / DXF Export Configuration */}
           <div className="bg-[#181A1E] border border-[#26282E] rounded-2xl p-3.5 space-y-3">

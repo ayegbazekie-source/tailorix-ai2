@@ -233,12 +233,61 @@ export default function CuttingSheetItem({
     onSetChalkColor?.(hex);
   };
 
+  // If sheet is hidden, do not render overlay controls
+  if (sheet.visible === false) {
+    return null;
+  }
+
   const screenX = sheet.x * zoom + panOffset.x;
   const screenY = sheet.y * zoom + panOffset.y;
-  const isNearTop = screenY < 75;
-  // Viewport clamping: ensures the toggle button/bar is NEVER hidden away when sheet is zoomed or scrolled
-  const headerTopOffset = screenY < 55 ? Math.max(0, 55 - screenY) : -46;
-  const headerLeftOffset = screenX < 16 ? Math.max(0, 16 - screenX) : 0;
+  const pixelW = effectiveWidth * zoom;
+  const pixelH = effectiveHeight * zoom;
+
+  // Viewport geometry constraints:
+  // Top header height is ~56px
+  const headerHeight = 56;
+  const minMargin = 12;
+  const vpWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const vpHeight = typeof window !== 'undefined' ? window.innerHeight : 768;
+  const isMobile = vpWidth < 768;
+
+  // Approximate controls width based on mode and device
+  const badgeWidth = isControlsExpanded
+    ? Math.min(520, vpWidth - 24)
+    : isMobile
+    ? Math.min(300, vpWidth - 24)
+    : 360;
+  const badgeHeight = isControlsExpanded ? 46 : 38;
+
+  // Vertical placement logic:
+  // Check if safe space exists above the sheet (must not collide with fixed header)
+  const spaceAbove = screenY - headerHeight;
+  let headerTopOffset = -44;
+  if (spaceAbove < badgeHeight + 8) {
+    // Not enough space above sheet without colliding with header
+    if (pixelH >= badgeHeight + 20) {
+      // Place neatly inside the sheet at the top edge
+      headerTopOffset = 8;
+    } else if (screenY + pixelH + badgeHeight + 10 < vpHeight) {
+      // Small sheet: place below the sheet
+      headerTopOffset = pixelH + 8;
+    } else {
+      // Safe fallback: clamp inside viewport below header
+      headerTopOffset = Math.max(0, headerHeight + 8 - screenY);
+    }
+  }
+
+  // Horizontal placement logic:
+  // Strictly clamp toggle controls so they NEVER extend or elongate out of screen
+  let headerLeftOffset = 0;
+  const screenLeft = screenX + headerLeftOffset;
+  const screenRight = screenLeft + badgeWidth;
+  if (screenRight > vpWidth - minMargin) {
+    headerLeftOffset -= (screenRight - (vpWidth - minMargin));
+  }
+  if (screenX + headerLeftOffset < minMargin) {
+    headerLeftOffset = minMargin - screenX;
+  }
 
   return (
     <div
@@ -248,6 +297,7 @@ export default function CuttingSheetItem({
         top: `${screenY}px`,
         width: `${effectiveWidth * zoom}px`,
         height: `${effectiveHeight * zoom}px`,
+        zIndex: isSelected ? 40 : 20,
       }}
       id={`cutting-sheet-overlay-${sheet.id}`}
     >
@@ -257,8 +307,8 @@ export default function CuttingSheetItem({
       {!isControlsExpanded ? (
         /* Sleek Collapsed Badge: Compact & Unobtrusive to keep workspace clear for drawing */
         <div
-          className="absolute z-40 pointer-events-auto flex items-center gap-1.5 bg-[#090d16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-amber-500/60 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none whitespace-nowrap"
-          style={{ top: `${headerTopOffset}px`, left: `${headerLeftOffset}px` }}
+          className="absolute z-40 pointer-events-auto flex items-center gap-1 sm:gap-1.5 bg-[#090d16]/95 backdrop-blur-md px-1.5 sm:px-2.5 py-1 rounded-xl border border-amber-500/60 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none max-w-[calc(100vw-24px)] overflow-x-auto no-scrollbar"
+          style={{ top: `${headerTopOffset}px`, left: `${headerLeftOffset}px`, maxWidth: `${vpWidth - 24}px` }}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
@@ -268,7 +318,7 @@ export default function CuttingSheetItem({
           {/* Move Drag Handle */}
           <button
             onPointerDown={handleStartDrag}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase transition-all shadow-xs ${
+            className={`flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-bold uppercase transition-all shadow-xs shrink-0 ${
               sheet.locked
                 ? 'bg-slate-800/80 text-slate-400 cursor-not-allowed'
                 : isDragging
@@ -282,15 +332,15 @@ export default function CuttingSheetItem({
           </button>
 
           {/* Title & Dimension Badge */}
-          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-800/90 rounded-lg text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-            <span className="truncate max-w-[100px]">{sheet.name}</span>
-            <span className="text-slate-400 font-mono text-[9px]">
+          <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 bg-slate-800/90 rounded-lg text-[9px] sm:text-[10px] font-bold text-amber-300 uppercase tracking-wider shrink-0">
+            <span className="truncate max-w-[55px] sm:max-w-[100px]">{sheet.name}</span>
+            <span className="text-slate-400 font-mono text-[9px] hidden sm:inline">
               {(effectiveWidth / 20).toFixed(1)}" × {(effectiveHeight / 20).toFixed(1)}"
             </span>
           </div>
 
           {/* Visual Mini Previews & Direct Inline Toggles: Sheet Color & Chalk Color */}
-          <div className="flex items-center gap-1.5 px-1.5 py-0.5 bg-slate-900/90 rounded-lg border border-slate-700/80 relative">
+          <div className="flex items-center gap-1 px-1 py-0.5 bg-slate-900/90 rounded-lg border border-slate-700/80 relative shrink-0">
             {/* Direct Sheet Color Button */}
             <button
               onClick={(e) => {
@@ -305,11 +355,9 @@ export default function CuttingSheetItem({
                 className="w-3.5 h-3.5 rounded-full border border-white/70 shadow-xs shrink-0 ring-1 ring-black/40"
                 style={{ backgroundColor: sheet.color || '#ffffff' }}
               />
-              <span className="text-[9px] font-bold text-slate-300">Sheet</span>
+              <span className="text-[9px] font-bold text-slate-300 hidden sm:inline">Sheet</span>
             </button>
-
-            <span className="text-slate-600 text-[10px]">•</span>
-
+            <span className="text-slate-600 text-[10px] hidden sm:inline">•</span>
             {/* Direct Chalk Color Button */}
             <button
               onClick={(e) => {
@@ -324,7 +372,7 @@ export default function CuttingSheetItem({
                 className="w-3.5 h-3.5 rounded-full border border-white/90 shadow-xs shrink-0 ring-1 ring-black/40"
                 style={{ backgroundColor: sheet.chalkColor || activeChalkColor || '#facc15' }}
               />
-              <span className="text-[9px] font-bold text-amber-300">Chalk</span>
+              <span className="text-[9px] font-bold text-amber-300 hidden sm:inline">Chalk</span>
             </button>
 
             {/* Inline Sheet Color Picker Popover from Collapsed Badge */}
@@ -392,7 +440,7 @@ export default function CuttingSheetItem({
           {/* Expand Controls Button */}
           <button
             onClick={() => setIsControlsExpanded(true)}
-            className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-400 hover:text-slate-950 text-amber-300 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 border border-amber-500/40 shadow-xs"
+            className="px-1.5 sm:px-2 py-0.5 bg-amber-500/20 hover:bg-amber-400 hover:text-slate-950 text-amber-300 rounded-lg text-[9px] sm:text-[10px] font-bold transition-all flex items-center gap-1 border border-amber-500/40 shadow-xs shrink-0"
             title="Expand Cutting Sheet Controls (Fabric Color, Chalk Color, Mirror, Seam Allowance, Micro-Nudge)"
           >
             <Sliders className="w-3 h-3" />
@@ -403,7 +451,7 @@ export default function CuttingSheetItem({
           {/* Lock / Unlock */}
           <button
             onClick={() => emitUpdate({ locked: !sheet.locked })}
-            className={`p-1 rounded-lg transition-colors ${
+            className={`p-1 rounded-lg transition-colors shrink-0 ${
               sheet.locked
                 ? 'bg-amber-500 text-slate-950 font-bold'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -416,7 +464,7 @@ export default function CuttingSheetItem({
           {/* Delete Sheet */}
           <button
             onClick={() => onRemove?.(sheet.id)}
-            className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors"
+            className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors shrink-0"
             title="Remove Cutting Sheet"
           >
             <Trash2 className="w-3 h-3" />
@@ -425,8 +473,8 @@ export default function CuttingSheetItem({
       ) : (
         /* Full Expanded Toolbar with Carousel Slide Track & Viewport-Safe Clamping */
         <div
-          className="absolute z-40 pointer-events-auto flex items-center bg-[#090d16]/98 backdrop-blur-md px-1.5 py-1.5 rounded-2xl border border-amber-500/80 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none max-w-[min(540px,calc(100vw-36px))]"
-          style={{ top: `${headerTopOffset}px`, left: `${headerLeftOffset}px` }}
+          className="absolute z-40 pointer-events-auto flex items-center bg-[#090d16]/98 backdrop-blur-md px-1.5 py-1.5 rounded-2xl border border-amber-500/80 shadow-2xl text-slate-100 ring-1 ring-white/10 select-none max-w-[min(540px,calc(100vw-24px))]"
+          style={{ top: `${headerTopOffset}px`, left: `${headerLeftOffset}px`, maxWidth: `${vpWidth - 24}px` }}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();

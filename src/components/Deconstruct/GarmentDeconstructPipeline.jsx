@@ -425,7 +425,20 @@ export default function GarmentDeconstructPipeline() {
   return (
     <div className="w-full min-h-[calc(100vh-52px)] bg-[#101112] text-[#EDEDF0] pb-24 font-sans select-none">
       {/* Top Header & 4-Step Stepper Bar */}
-      <div className="bg-[#141517] border-b border-[#222427] sticky top-[52px] z-30 shadow-panel backdrop-blur-md">
+      <div
+        className="bg-[#141517] sticky top-[52px] z-30 shadow-panel backdrop-blur-md"
+        style={{
+          borderWidth: '0px',
+          lineHeight: '24px',
+          textAlign: 'center',
+          fontStyle: 'normal',
+          fontWeight: 'normal',
+          paddingLeft: '1px',
+          marginLeft: '0px',
+          marginRight: '0px',
+          width: '343.417px',
+        }}
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex items-center gap-3">

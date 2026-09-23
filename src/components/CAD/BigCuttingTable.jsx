@@ -2327,6 +2327,16 @@ const BigCuttingTable = forwardRef(function BigCuttingTable({
               <Scissors className="w-4 h-4" />
             </div>
             <span className="text-xs font-bold text-slate-200 hidden sm:inline">Cutting Table</span>
+            {onNavigateToDrafting && (
+              <button
+                onClick={onNavigateToDrafting}
+                className="ml-2 px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-amber-500/20 border border-slate-700/80 hover:border-amber-500/40 text-slate-300 hover:text-amber-300 text-xs font-bold flex items-center gap-1.5 transition-all"
+                title="Switch to Pattern Drafting Board"
+              >
+                <PenTool className="w-3.5 h-3.5 text-amber-400" />
+                <span>Pattern Drafting Board</span>
+              </button>
+            )}
           </div>
         </div>
 

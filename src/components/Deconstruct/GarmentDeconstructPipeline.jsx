@@ -1,12 +1,15 @@
 /**
  * TAILORIX AI — GARMENT DECONSTRUCT TOOL (AI REVERSE-ENGINEERING PIPELINE)
+ * The Canonical "Photo to Pattern" / "Breakdown" Workspace
+ * 
  * 4-Step Technical Pipeline:
- * Step 1: Photo Upload & AI Vision Extraction
- * Step 2: Technical Review & Tailoring Refinement (Silhouette, Closures, Interfacing, Master Sequence)
- * Step 3: Technical Blueprint & Flat Pattern Breakdown
- * Step 4: Export to Studio Canvas
+ * Step 1: Multi-Image Photo Upload & AI Vision Extraction (Gemini Multi-Modal Perception)
+ * Step 2: Technical Review, Risk Evaluation & Tailoring Refinement (Groq Natural Language Commands)
+ * Step 3: Technical Blueprint & Flat Pattern Breakdown (Deterministic CAD Geometry)
+ * Step 4: Export to Studio Canvas & CAD Cutting Table
  *
- * Dark graphite interface (#101112) with champagne gold accents (#C5A059) and native app ergonomics.
+ * Sits on top of the Centralized AI Orchestrator, Pattern Generation Safety Gate,
+ * and Canonical GarmentSpecification.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -29,27 +32,66 @@ import {
   ChevronDown,
   Camera,
   Check,
+  Send,
+  Wrench,
+  HelpCircle,
+  AlertTriangle,
+  Plus,
+  Trash2,
+  Cpu,
+  Layers3,
 } from 'lucide-react';
 import { DECONSTRUCT_BENCHMARK_SAMPLES } from '../../data/deconstructSamples';
 import { generatePattern } from '../../utils/patternEngine/patternRegistry';
 import { getDefaultMeasurementsForGarment } from '../../models/measurementDefinitions';
-import { analyzeGarment } from '../../services/garmentAnalyzer';
+import { aiOrchestrator } from '../../services/ai/aiOrchestrator';
+import { createGarmentSpecification, SPEC_STATUS } from '../../models/garmentSpecification';
+import { checkPatternGenerationGate } from '../../services/ai/aiRiskEvaluator';
+import DeconstructWorkbench from './DeconstructWorkbench';
 
 export default function GarmentDeconstructPipeline() {
   const navigate = useNavigate();
 
+  // Mode: 'pipeline' (4-step guided breakdown) | 'workbench' (full CAD canvas workbench)
+  const [activeMode, setActiveMode] = useState('pipeline');
+
   // Active step: 1 | 2 | 3 | 4
   const [currentStep, setCurrentStep] = useState(1);
 
-  // Step 1: Upload & Photo state
+  // Step 1: Multi-Image Upload & Photo state
   const [selectedImage, setSelectedImage] = useState(null);
   const [imageFile, setImageFile] = useState(null);
+  const [additionalImages, setAdditionalImages] = useState([]); // Array of { id, role, data, name }
   const [selectedSampleId, setSelectedSampleId] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisPhase, setAnalysisPhase] = useState('');
 
-  // Step 2: Extracted Technical Specifications (with interactive tailor overrides)
+  // AI Perception Diagnostics State
+  const [analysisDiagnostics, setAnalysisDiagnostics] = useState({
+    provider: 'gemini',
+    risk: { level: 'low', reasons: [] },
+    observations: [],
+    uncertainties: [],
+    questionsForUser: [],
+  });
+
+  // Natural Language Refinement State (Groq interactive command interpreter)
+  const [userInstructionInput, setUserInstructionInput] = useState('');
+  const [isRefiningInstruction, setIsRefiningInstruction] = useState(false);
+  const [refinementFeedback, setRefinementFeedback] = useState(null);
+
+  // Canonical GarmentSpecification backing the pipeline
+  const [canonicalSpec, setCanonicalSpec] = useState(() =>
+    createGarmentSpecification({
+      garmentType: 'trouser',
+      name: 'Tailored Trousers',
+      confidence: 0.96,
+      silhouette: 'classic',
+    })
+  );
+
+  // Extracted Technical Specifications for UI form synchronization
   const [extractedSpec, setExtractedSpec] = useState(() => {
     const s = DECONSTRUCT_BENCHMARK_SAMPLES[0] || {};
     return {
@@ -88,7 +130,7 @@ export default function GarmentDeconstructPipeline() {
   // Selected pattern piece preview in Step 3
   const [activePreviewPieceId, setActivePreviewPieceId] = useState(null);
 
-  // Handle local file upload
+  // Handle local primary image upload
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -99,12 +141,33 @@ export default function GarmentDeconstructPipeline() {
     }
   };
 
+  // Handle additional multi-angle reference image upload (back, detail, sleeve, etc.)
+  const handleAddSecondaryImage = (e, role = 'detail') => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const newImg = {
+        id: `img_${Date.now()}`,
+        role,
+        data: url,
+        file,
+        name: file.name,
+      };
+      setAdditionalImages((prev) => [...prev, newImg]);
+    }
+  };
+
+  const handleRemoveSecondaryImage = (id) => {
+    setAdditionalImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
   // Select one of the curated benchmark samples
   const handleSelectSample = (sample) => {
     setSelectedSampleId(sample.id);
     setSelectedImage(sample.image);
     setImageFile(null);
-    setExtractedSpec({
+    setAdditionalImages([]);
+    const updated = {
       garmentType: sample.category,
       name: sample.name,
       confidence: sample.confidence,
@@ -128,39 +191,77 @@ export default function GarmentDeconstructPipeline() {
         'Attach linings and finish hems',
       ],
       targetFabric: sample.defaultFabric || 'wool_tweed',
-    });
+    };
+    setExtractedSpec(updated);
+    setCanonicalSpec(createGarmentSpecification(updated));
   };
 
-  // Run AI Vision Extraction
+  // Run Real AI Vision Extraction via the Centralized AI Orchestrator (Gemini)
   const handleStartAnalysis = async () => {
     setIsAnalyzing(true);
     setAnalysisProgress(15);
     setAnalysisPhase('Phase 1/4: Analyzing silhouette geometry & topological drape...');
 
     try {
-      if (imageFile) {
+      if (selectedImage || imageFile || additionalImages.length > 0) {
         setAnalysisProgress(35);
-        setAnalysisPhase('Phase 2/4: Extracting seamlines, grainlines, and closures...');
-        const result = await analyzeGarment(imageFile);
+        setAnalysisPhase('Phase 2/4: Extracting seamlines, grainlines, and closures via AI Orchestrator...');
 
-        setAnalysisProgress(70);
-        setAnalysisPhase('Phase 3/4: Estimating structural interfacings & linings...');
+        // Assemble multi-image payload with explicit roles
+        const imagePayload = [];
+        if (selectedImage) {
+          imagePayload.push({
+            id: 'img_front',
+            role: 'front',
+            data: selectedImage,
+          });
+        }
+        additionalImages.forEach((img) => {
+          imagePayload.push({
+            id: img.id,
+            role: img.role || 'detail',
+            data: img.data,
+          });
+        });
 
-        if (result && result.detectedType) {
+        // Call the centralized AI Orchestrator
+        const orchestratorResult = await aiOrchestrator.analyzeGarment(imagePayload, {
+          garmentSpecification: canonicalSpec || extractedSpec,
+        });
+
+        setAnalysisProgress(75);
+        setAnalysisPhase('Phase 3/4: Estimating structural interfacings, linings & risk profile...');
+
+        if (orchestratorResult.success && (orchestratorResult.data || orchestratorResult.specification)) {
+          const spec = orchestratorResult.data || orchestratorResult.specification;
+          setCanonicalSpec(spec);
+
+          setAnalysisDiagnostics({
+            provider: orchestratorResult.provider || 'gemini',
+            risk: orchestratorResult.risk || spec.risk || { level: 'low', reasons: [] },
+            observations: orchestratorResult.observations || spec.observations || [],
+            uncertainties: orchestratorResult.uncertainties || spec.uncertainties || [],
+            questionsForUser: orchestratorResult.questionsForUser || spec.questionsForUser || [],
+          });
+
+          // Sync into extractedSpec state
+          const detectedType = spec.identity?.garmentType || spec.garmentType || 'trouser';
           setExtractedSpec((prev) => ({
             ...prev,
-            garmentType: result.detectedType,
-            name: result.title || prev.name,
-            confidence: result.confidence || 0.94,
-            description: result.description || prev.description,
-            silhouette: result.silhouette || prev.silhouette,
-            neckline: result.neckline || prev.neckline,
-            sleeves: result.sleeves || prev.sleeves,
-            closure: result.closures || prev.closure,
+            garmentType: detectedType,
+            name: spec.name || prev.name,
+            confidence: orchestratorResult.confidence ?? spec.confidence ?? 0.95,
+            silhouette: spec.silhouette?.primary || spec.silhouette || prev.silhouette,
+            neckline: spec.neckline?.type || spec.neckline || prev.neckline,
+            sleeves: spec.sleeve?.type || spec.sleeves || prev.sleeves,
+            closure: spec.closures?.[0]?.type || spec.closure || prev.closure,
+            interfacing: spec.constructionDetails?.interfacing || prev.interfacing,
+            lining: spec.constructionDetails?.lining || prev.lining,
+            constructionSequence: spec.constructionDetails?.sequence || prev.constructionSequence,
           }));
         }
       } else {
-        // Benchmark simulation sequence
+        // Benchmark simulation sequence if no image uploaded
         await new Promise((r) => setTimeout(r, 600));
         setAnalysisProgress(40);
         setAnalysisPhase('Phase 2/4: Detecting seam trajectories & dart placements...');
@@ -175,7 +276,7 @@ export default function GarmentDeconstructPipeline() {
       setTimeout(() => {
         setIsAnalyzing(false);
         setCurrentStep(2);
-      }, 500);
+      }, 400);
     } catch (err) {
       console.error('Analysis error:', err);
       setIsAnalyzing(false);
@@ -183,28 +284,84 @@ export default function GarmentDeconstructPipeline() {
     }
   };
 
-  // Generate CAD pattern blueprint pieces based on current extracted specifications
-  const patternPieces = useMemo(() => {
+  // Interactive Natural Language Tailoring Refinement (Powered by Groq)
+  const handleApplyTailorInstruction = async (instructionText) => {
+    const textToRun = (instructionText || userInstructionInput || '').trim();
+    if (!textToRun || isRefiningInstruction) return;
+
+    setIsRefiningInstruction(true);
+    setRefinementFeedback(null);
+
     try {
-      const type = extractedSpec.garmentType || 'trouser';
+      const activeSpec = canonicalSpec || createGarmentSpecification(extractedSpec);
+
+      // Call orchestrator -> routes to Groq for fast natural language command parsing
+      const interpretation = await aiOrchestrator.interpretUserInstruction(textToRun, {
+        garmentSpecification: activeSpec,
+      });
+
+      if (interpretation.success && interpretation.command) {
+        // Execute command deterministically in Tailorix
+        const updatedSpec = aiOrchestrator.executePatternCommand(interpretation.command, activeSpec);
+        setCanonicalSpec(updatedSpec);
+
+        // Synchronize UI form fields
+        setExtractedSpec((prev) => ({
+          ...prev,
+          silhouette: updatedSpec.silhouette?.primary || prev.silhouette,
+          sleeves: updatedSpec.sleeve?.type || prev.sleeves,
+          neckline: updatedSpec.neckline?.type || prev.neckline,
+          closure: updatedSpec.closures?.[0]?.type || prev.closure,
+          userCorrections: updatedSpec.userCorrections,
+        }));
+
+        setRefinementFeedback({
+          success: true,
+          message: interpretation.explanation || `Executed: ${interpretation.command.action} on ${interpretation.command.target}`,
+        });
+        setUserInstructionInput('');
+      } else {
+        setRefinementFeedback({
+          success: false,
+          message: interpretation.message || 'Could not understand tailoring modification command.',
+        });
+      }
+    } catch (err) {
+      setRefinementFeedback({
+        success: false,
+        message: err.message || 'Failed to apply tailoring refinement.',
+      });
+    } finally {
+      setIsRefiningInstruction(false);
+    }
+  };
+
+  // Pattern Generation with Gate Safety Verification
+  const patternResolution = useMemo(() => {
+    try {
+      const activeSpec = canonicalSpec || createGarmentSpecification(extractedSpec);
+      const type = activeSpec.identity?.garmentType || activeSpec.garmentType || 'trouser';
       const defs = getDefaultMeasurementsForGarment(type);
-      const res = generatePattern(type, defs, {
+
+      const res = generatePattern(activeSpec, defs, {
         seamAllowance: extractedSpec.seamAllowance || 0.5,
         targetFabric: extractedSpec.targetFabric || 'wool_tweed',
       });
-      return res?.pieces || [];
+      return res;
     } catch (e) {
       console.warn('Pattern generation error:', e);
-      return [];
+      return { status: 'error', pieces: [], reason: e.message };
     }
-  }, [extractedSpec.garmentType, extractedSpec.seamAllowance, extractedSpec.targetFabric]);
+  }, [canonicalSpec, extractedSpec]);
+
+  const patternPieces = patternResolution?.pieces || [];
 
   const activePiece = useMemo(() => {
     if (!patternPieces || patternPieces.length === 0) return null;
     return patternPieces.find((p) => p.id === activePreviewPieceId) || patternPieces[0];
   }, [patternPieces, activePreviewPieceId]);
 
-  // Export Pieces to Studio Canvas
+  // Export Pieces to Studio Canvas & CAD Cutting Table
   const handleExportToStudioCanvas = () => {
     const payload = {
       source: 'deconstruct',
@@ -228,7 +385,7 @@ export default function GarmentDeconstructPipeline() {
         darts: piece.darts || [],
         category: piece.category || 'shell',
       })),
-      spec: extractedSpec,
+      spec: canonicalSpec || extractedSpec,
     };
 
     try {
@@ -239,6 +396,31 @@ export default function GarmentDeconstructPipeline() {
 
     navigate('/cad', { state: { importedPayload: payload } });
   };
+
+  // If user chooses CAD Workbench mode, render full interactive Deconstruct Workbench
+  if (activeMode === 'workbench') {
+    return (
+      <div className="w-full h-full flex flex-col bg-[#101112]">
+        {/* Top bar switch */}
+        <div className="bg-[#141517] border-b border-[#222427] px-4 py-2 flex items-center justify-between z-20">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-[#F5F5F7]">CAD Deconstruct Workbench</span>
+            <span className="text-xs text-[#8A8B93] font-mono">• Vector Canvas Mode</span>
+          </div>
+          <button
+            onClick={() => setActiveMode('pipeline')}
+            className="px-3 py-1.5 bg-[#C5A059]/15 border border-[#C5A059]/40 hover:bg-[#C5A059]/25 text-[#E5C07B] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+          >
+            <Layers3 className="w-3.5 h-3.5" />
+            <span>Switch to 4-Step Breakdown Pipeline</span>
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <DeconstructWorkbench initialImage={selectedImage} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full min-h-[calc(100vh-52px)] bg-[#101112] text-[#EDEDF0] pb-24 font-sans select-none">
@@ -253,10 +435,10 @@ export default function GarmentDeconstructPipeline() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-[#C5A059]">
-                    AI Reverse-Engineering
+                    Photo to Pattern Breakdown
                   </span>
                   <span className="text-xs text-[#6A6C75]">•</span>
-                  <span className="text-xs text-[#8A8B93] font-mono">Vision to 2D Blueprints</span>
+                  <span className="text-xs text-[#8A8B93] font-mono">Centralized AI Orchestrator</span>
                 </div>
                 <h1 className="text-sm sm:text-base font-semibold text-[#F5F5F7]">
                   Garment Deconstruct Pipeline
@@ -264,47 +446,59 @@ export default function GarmentDeconstructPipeline() {
               </div>
             </div>
 
-            {/* Stepper Controls */}
-            <div className="flex items-center gap-1 sm:gap-2">
-              {[
-                { step: 1, label: 'Upload' },
-                { step: 2, label: 'Tech Review' },
-                { step: 3, label: 'Blueprint' },
-                { step: 4, label: 'Studio Export' },
-              ].map((item) => {
-                const isActive = currentStep === item.step;
-                const isDone = currentStep > item.step;
-                return (
-                  <button
-                    key={item.step}
-                    onClick={() => {
-                      if (item.step <= currentStep || currentStep >= 2) {
-                        setCurrentStep(item.step);
-                      }
-                    }}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                      isActive
-                        ? 'bg-[#C5A059]/15 border border-[#C5A059]/40 text-[#E5C07B] shadow-gold-sm'
-                        : isDone
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/15'
-                        : 'bg-[#18191C] text-[#6A6C75] border border-transparent'
-                    }`}
-                  >
-                    {isDone ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <span
-                        className={`w-4 h-4 flex items-center justify-center rounded-full text-[10px] ${
-                          isActive ? 'bg-[#C5A059] text-[#101112] font-bold' : 'bg-[#222427] text-[#8A8B93]'
-                        }`}
-                      >
-                        {item.step}
-                      </span>
-                    )}
-                    <span className="hidden sm:inline">{item.label}</span>
-                  </button>
-                );
-              })}
+            {/* Stepper Controls & Workbench Switcher */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2">
+                {[
+                  { step: 1, label: 'Upload' },
+                  { step: 2, label: 'Tech Review' },
+                  { step: 3, label: 'Blueprint' },
+                  { step: 4, label: 'Studio Export' },
+                ].map((item) => {
+                  const isActive = currentStep === item.step;
+                  const isDone = currentStep > item.step;
+                  return (
+                    <button
+                      key={item.step}
+                      onClick={() => {
+                        if (item.step <= currentStep || currentStep >= 2) {
+                          setCurrentStep(item.step);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                        isActive
+                          ? 'bg-[#C5A059]/15 border border-[#C5A059]/40 text-[#E5C07B] shadow-gold-sm'
+                          : isDone
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/15'
+                          : 'bg-[#18191C] text-[#6A6C75] border border-transparent'
+                      }`}
+                    >
+                      {isDone ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <span
+                          className={`w-4 h-4 flex items-center justify-center rounded-full text-[10px] ${
+                            isActive ? 'bg-[#C5A059] text-[#101112] font-bold' : 'bg-[#222427] text-[#8A8B93]'
+                          }`}
+                        >
+                          {item.step}
+                        </span>
+                      )}
+                      <span className="hidden sm:inline">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Toggle to CAD Workbench */}
+              <button
+                onClick={() => setActiveMode('workbench')}
+                title="Open Freeform CAD Workbench"
+                className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-[#18191C] hover:bg-[#202226] text-[#8A8B93] hover:text-[#EDEDF0] border border-[#28292D] rounded-xl text-xs font-medium transition-all"
+              >
+                <Wrench className="w-3.5 h-3.5 text-[#C5A059]" />
+                <span>CAD Workbench</span>
+              </button>
             </div>
           </div>
         </div>
@@ -321,10 +515,10 @@ export default function GarmentDeconstructPipeline() {
             <div className="bg-[#141517] rounded-2xl border border-[#222427] p-6 sm:p-8 shadow-panel">
               <div className="text-center mb-6">
                 <h2 className="text-base sm:text-lg font-semibold text-[#F5F5F7]">
-                  Upload Garment Reference or Sketch
+                  Upload Garment Reference or Multi-Angle Imagery
                 </h2>
                 <p className="text-xs text-[#8A8B93] mt-1 max-w-md mx-auto">
-                  Reverse-engineer high-resolution garment photography, couture flat sketches, or technical line drawings into CAD-ready specifications.
+                  Reverse-engineer high-resolution garment photography, couture flat sketches, or multi-angle photos directly into production pattern blueprints.
                 </p>
               </div>
 
@@ -355,9 +549,12 @@ export default function GarmentDeconstructPipeline() {
                   <div className="relative w-full flex flex-col items-center justify-center bg-[#0C0D0E] rounded-xl p-3 border border-[#1E2024] overflow-hidden">
                     <img
                       src={selectedImage}
-                      alt="Garment Reference Preview"
+                      alt="Primary Garment Reference"
                       className="max-h-[260px] w-full object-contain rounded-lg mx-auto block"
                     />
+                    <div className="absolute top-3 left-3 bg-[#101112]/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-[#28292D] text-[10px] font-mono font-semibold text-[#C5A059]">
+                      PRIMARY VIEW [FRONT]
+                    </div>
                     <div className="absolute bottom-3 right-3 bg-[#141517]/90 backdrop-blur-sm text-[#EDEDF0] px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 shadow-floating border border-[#28292D]">
                       <Upload className="w-3.5 h-3.5 text-[#C5A059]" />
                       Tap or drop to replace photo
@@ -372,11 +569,62 @@ export default function GarmentDeconstructPipeline() {
                       Tap or Drop Garment Photo Here
                     </span>
                     <span className="text-xs text-[#8A8B93] mt-1 max-w-xs">
-                      Supports JPG, PNG, WEBP (front or 3/4 couture angle)
+                      Supports JPG, PNG, WEBP (front, back, or 3/4 couture angle)
                     </span>
                   </div>
                 )}
               </label>
+
+              {/* Secondary Reference Angles / Multi-Image Upload (Stage 2 & 2.5 Multi-Modal) */}
+              <div className="mt-4 pt-4 border-t border-[#222427]">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-[#EDEDF0]">Multi-Angle Imagery</span>
+                    <span className="text-[10px] text-[#8A8B93] font-mono">(Back, Close-ups, Seams, Construction)</span>
+                  </div>
+                  <label className="cursor-pointer px-2.5 py-1 bg-[#1A1B1E] hover:bg-[#222427] border border-[#2A2B30] text-[#E5C07B] rounded-lg text-xs font-medium flex items-center gap-1 transition-all">
+                    <Plus className="w-3 h-3" />
+                    <span>Add Angle</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleAddSecondaryImage(e, 'back')}
+                      className="hidden"
+                      disabled={isAnalyzing}
+                    />
+                  </label>
+                </div>
+
+                {additionalImages.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {additionalImages.map((img) => (
+                      <div
+                        key={img.id}
+                        className="relative bg-[#101112] rounded-xl border border-[#222427] p-2 flex flex-col items-center group"
+                      >
+                        <img
+                          src={img.data}
+                          alt={img.role}
+                          className="w-full h-20 object-contain rounded-lg"
+                        />
+                        <div className="w-full mt-1.5 flex items-center justify-between text-[10px] font-mono text-[#8A8B93]">
+                          <span className="uppercase text-[#C5A059]">{img.role}</span>
+                          <button
+                            onClick={() => handleRemoveSecondaryImage(img.id)}
+                            className="text-[#6A6C75] hover:text-rose-400 transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-[#6A6C75] italic">
+                    Add back view, collar closeups, or seam details for higher AI precision.
+                  </p>
+                )}
+              </div>
 
               {/* Analysis Status or Launch Button */}
               <div className="mt-6">
@@ -400,13 +648,13 @@ export default function GarmentDeconstructPipeline() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span>[2] Seams, grainlines & closures</span>
+                        <span>[2] Seams, grainlines & closures (Gemini Vision)</span>
                         <span className={analysisProgress >= 50 ? 'text-emerald-400 font-semibold' : 'text-[#6A6C75]'}>
                           {analysisProgress >= 50 ? 'DONE' : '...'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span>[3] Interfacing, boning & linings</span>
+                        <span>[3] Risk evaluation & master construction sequence</span>
                         <span className={analysisProgress >= 75 ? 'text-emerald-400 font-semibold' : 'text-[#6A6C75]'}>
                           {analysisProgress >= 75 ? 'DONE' : '...'}
                         </span>
@@ -427,8 +675,8 @@ export default function GarmentDeconstructPipeline() {
                     <Sparkles className="w-4 h-4" />
                     <span>
                       {selectedImage
-                        ? 'Execute AI Garment Deconstruction'
-                        : 'Select Couture Sample & Deconstruct'}
+                        ? 'Execute AI Garment Deconstruction (AI Orchestrator)'
+                        : 'Select Sample & Deconstruct'}
                     </span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
@@ -436,7 +684,7 @@ export default function GarmentDeconstructPipeline() {
               </div>
             </div>
 
-            {/* Couture Benchmark Sample Library */}
+            {/* Benchmark Garment Sample Library */}
             <div className="bg-[#141517] rounded-2xl border border-[#222427] p-5 shadow-panel">
               <div className="flex items-center justify-between mb-3">
                 <div>
@@ -491,7 +739,7 @@ export default function GarmentDeconstructPipeline() {
         )}
 
         {/* ========================================================================= */}
-        {/* STEP 2: REVIEW & REFINE TECHNICAL SPECIFICATIONS                          */}
+        {/* STEP 2: REVIEW & REFINE TECHNICAL SPECIFICATIONS (GROQ TAILORING INTERPRETER) */}
         {/* ========================================================================= */}
         {currentStep === 2 && (
           <div className="max-w-4xl mx-auto space-y-5">
@@ -503,7 +751,7 @@ export default function GarmentDeconstructPipeline() {
                     <img
                       src={selectedImage}
                       alt={extractedSpec.name}
-                      className="max-h-[140px] w-auto max-w-[140px] object-contain rounded-lg mx-auto block"
+                      className="max-h-[120px] w-auto max-w-[120px] object-contain rounded-lg mx-auto block"
                     />
                   </div>
                 )}
@@ -513,9 +761,12 @@ export default function GarmentDeconstructPipeline() {
                     <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-md font-mono text-[10px] font-bold">
                       {Math.round((extractedSpec.confidence || 0.96) * 100)}% Match
                     </span>
+                    <span className="px-2 py-0.5 bg-[#C5A059]/15 border border-[#C5A059]/30 text-[#E5C07B] rounded-md font-mono text-[10px] font-bold uppercase">
+                      {analysisDiagnostics.provider || 'gemini'}
+                    </span>
                   </div>
                   <p className="text-xs text-[#8A8B93] mt-1 max-w-md">
-                    Review extracted specifications or adjust tailoring parameters before generating production blueprints.
+                    Review extracted specifications, prompt tailoring refinements via Groq, or adjust tailoring parameters before generating production blueprints.
                   </p>
                 </div>
               </div>
@@ -538,7 +789,130 @@ export default function GarmentDeconstructPipeline() {
               </div>
             </div>
 
-            {/* Collapsible Accordion Cards */}
+            {/* AI Perception & Risk Evaluation Diagnostic Card */}
+            <div className="bg-[#141517] rounded-2xl border border-[#222427] p-4 shadow-panel space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-[#C5A059]" />
+                  <span className="text-xs font-semibold text-[#EDEDF0]">AI Perception & Risk Diagnostic</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[#8A8B93]">Risk Level:</span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                      analysisDiagnostics.risk?.level === 'high'
+                        ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                        : analysisDiagnostics.risk?.level === 'medium'
+                        ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {analysisDiagnostics.risk?.level || 'low'}
+                  </span>
+                </div>
+              </div>
+
+              {analysisDiagnostics.risk?.reasons?.length > 0 && (
+                <div className="p-2.5 bg-[#101112] rounded-xl border border-[#222427] text-xs text-[#8A8B93] space-y-1">
+                  <div className="font-semibold text-[#EDEDF0] text-[11px]">Evaluation Notes:</div>
+                  {analysisDiagnostics.risk.reasons.map((r, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-[11px]">
+                      <span className="text-[#C5A059]">•</span>
+                      <span>{r}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Questions for user if ambiguous */}
+              {analysisDiagnostics.questionsForUser?.length > 0 && (
+                <div className="p-2.5 bg-amber-500/10 rounded-xl border border-amber-500/30 text-xs text-amber-300 space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5 text-[11px]">
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    <span>Ambiguities to Clarify:</span>
+                  </div>
+                  {analysisDiagnostics.questionsForUser.map((q, i) => (
+                    <div key={i} className="text-[11px] ml-4">• {q.question || q}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Interactive Natural Language Tailoring Refinement Console (Groq Provider) */}
+            <div className="bg-[#141517] rounded-2xl border border-[#2D2E32] p-4 shadow-panel space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#C5A059]" />
+                  <span className="text-xs font-semibold text-[#F5F5F7]">
+                    Natural Language Tailoring Refinement (Powered by Groq)
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-[#8A8B93]">Instant Intent-to-Geometry</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={userInstructionInput}
+                  onChange={(e) => setUserInstructionInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleApplyTailorInstruction();
+                  }}
+                  placeholder="e.g., 'Make the thigh 2 inches wider', 'Change sleeve to raglan', 'Convert front dart into princess seam'..."
+                  disabled={isRefiningInstruction}
+                  className="flex-1 px-3 py-2 bg-[#101112] border border-[#28292D] rounded-xl text-xs text-[#EDEDF0] placeholder-[#6A6C75] focus:border-[#C5A059]/60 focus:outline-hidden"
+                />
+                <button
+                  onClick={() => handleApplyTailorInstruction()}
+                  disabled={isRefiningInstruction || !userInstructionInput.trim()}
+                  className="px-4 py-2 bg-[#C5A059] hover:bg-[#D4AF37] disabled:opacity-40 text-[#101112] font-semibold text-xs rounded-xl transition-all shadow-gold-sm flex items-center gap-1.5 shrink-0"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isRefiningInstruction ? 'Applying...' : 'Apply Command'}</span>
+                </button>
+              </div>
+
+              {/* Suggestion Chips */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="text-[10px] text-[#6A6C75]">Quick Commands:</span>
+                {[
+                  'Make the thigh 2 inches wider',
+                  'Change sleeve to raglan',
+                  'Convert front dart to princess seam',
+                  'Remove back pocket',
+                  'Add waistband',
+                ].map((chip) => (
+                  <button
+                    key={chip}
+                    onClick={() => handleApplyTailorInstruction(chip)}
+                    disabled={isRefiningInstruction}
+                    className="px-2.5 py-1 bg-[#1A1B1E] hover:bg-[#222427] border border-[#28292D] text-[#8A8B93] hover:text-[#EDEDF0] text-[10px] rounded-lg transition-all"
+                  >
+                    "{chip}"
+                  </button>
+                ))}
+              </div>
+
+              {/* Feedback Alert */}
+              {refinementFeedback && (
+                <div
+                  className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                    refinementFeedback.success
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  {refinementFeedback.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{refinementFeedback.message}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Collapsible Accordion Cards for Manual Tweaking */}
             <div className="space-y-3">
               {/* 1. Silhouette & Cut */}
               <details open className="group bg-[#141517] rounded-2xl border border-[#222427] shadow-panel overflow-hidden">
@@ -690,7 +1064,7 @@ export default function GarmentDeconstructPipeline() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-mono text-[#8A8B93]">
-                      {extractedSpec.constructionSequence?.length || 12} Operations
+                      {extractedSpec.constructionSequence?.length || 11} Operations
                     </span>
                     <ChevronDown className="w-4 h-4 text-[#8A8B93] group-open:rotate-180 transition-transform duration-200" />
                   </div>
@@ -717,17 +1091,40 @@ export default function GarmentDeconstructPipeline() {
         {/* ========================================================================= */}
         {currentStep === 3 && (
           <div className="space-y-6">
+            {/* Pattern Generation Safety Gate Warning if Unresolved */}
+            {patternResolution?.status === 'needs_clarification' && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-200">
+                    Pattern Generation Gate: Clarification Required
+                  </h3>
+                  <p className="text-xs text-amber-300/90 mt-1">
+                    {patternResolution.reason || 'Garment silhouette or critical construction parameters are ambiguous. Tailorix will not guess or default to incorrect trousers.'}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentStep(2)}
+                      className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-lg text-xs font-semibold"
+                    >
+                      Return to Step 2 to Confirm Details
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Header Bar */}
             <div className="bg-[#141517] rounded-2xl border border-[#222427] p-4 sm:p-5 shadow-panel flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-[10px] tracking-wider uppercase">
-                  Geometry Ready
+                  Canonical Geometry Ready
                 </span>
                 <h2 className="text-sm sm:text-base font-semibold text-[#F5F5F7] mt-1">
                   Pattern Blueprint Breakdown ({patternPieces.length} Panels)
                 </h2>
                 <p className="text-xs text-[#8A8B93]">
-                  Engineering flat patterns rendered with exact seam allowances, grainlines, notches, and cut quantities.
+                  Deterministic pattern pieces with exact geometric seam allowances, grainlines, notches, and cut quantities.
                 </p>
               </div>
 

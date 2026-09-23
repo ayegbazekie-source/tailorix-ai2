@@ -6,12 +6,15 @@
 
 import { createGarmentSpecification } from '../models/garmentSpecification';
 import { getGarmentType, GARMENT_TYPES } from '../models/garmentTaxonomy';
-import { deconstructGarmentImage } from './aiService';
+import { deconstructGarmentImages, deconstructGarmentImage } from './aiService';
 
 /**
- * Main analyzer interface. Attempts remote AI service, falling back to rich local heuristic analyzer.
+ * Main analyzer interface. Attempts AI provider/edge function service, falling back to heuristic analyzer.
  */
 export async function analyzeGarment(referenceImage, options = {}) {
+  const isMulti = Array.isArray(referenceImage);
+  const primaryImage = isMulti ? referenceImage[0] : referenceImage;
+
   // If no image is provided, fail cleanly
   if (!referenceImage && !options.manualType) {
     return {
@@ -25,29 +28,43 @@ export async function analyzeGarment(referenceImage, options = {}) {
     if (options.manualType) {
       const spec = createGarmentSpecification({
         garmentType: options.manualType,
-        referenceImage: typeof referenceImage === 'string' ? referenceImage : null,
+        referenceImage: typeof primaryImage === 'string' ? primaryImage : null,
         confidence: 1.0,
         source: 'manual_selection',
       });
       return { success: true, specification: spec };
     }
 
-    // Try real backend AI analysis if an image string is supplied
-    if (typeof referenceImage === 'string' && (referenceImage.startsWith('data:image') || referenceImage.startsWith('blob:') || referenceImage.startsWith('http'))) {
-      const backendResult = await deconstructGarmentImage(referenceImage, options);
-      if (backendResult.success && backendResult.data && backendResult.data.garmentType) {
-        const spec = createGarmentSpecification({
-          ...backendResult.data,
-          referenceImage,
-          source: 'ai_vision_backend',
-        });
-        return { success: true, specification: spec };
-      }
+    // Try backend AI analysis via deconstructGarmentImages
+    const backendResult = await deconstructGarmentImages(referenceImage, options);
+    if (backendResult.success && backendResult.data && backendResult.data.garmentType) {
+      const spec = createGarmentSpecification({
+        ...backendResult.data,
+        referenceImage: typeof primaryImage === 'string' ? primaryImage : (primaryImage?.data || null),
+        observations: backendResult.observations || backendResult.data.observations || [],
+        uncertainties: backendResult.uncertainties || backendResult.data.uncertainties || [],
+        questionsForUser: backendResult.questionsForUser || backendResult.data.questionsForUser || [],
+        sourceImages: backendResult.sourceImages || backendResult.data.sourceImages || [],
+        source: 'ai_vision_backend',
+      });
+      return {
+        success: true,
+        specification: spec,
+        observations: backendResult.observations,
+        uncertainties: backendResult.uncertainties,
+        questionsForUser: backendResult.questionsForUser,
+        sourceImages: backendResult.sourceImages,
+      };
+    }
+
+    // If structured error returned and not in fallback mode
+    if (backendResult && backendResult.status === 'error' && options.strictErrors) {
+      return backendResult;
     }
 
     // Realistic Mock / Heuristic Analyzer
-    const inferredType = detectGarmentTypeFromContext(referenceImage, options);
-    const mockSpec = generateRealisticMockSpecification(inferredType, referenceImage);
+    const inferredType = detectGarmentTypeFromContext(primaryImage, options);
+    const mockSpec = generateRealisticMockSpecification(inferredType, primaryImage);
 
     return {
       success: true,
@@ -56,7 +73,7 @@ export async function analyzeGarment(referenceImage, options = {}) {
   } catch (err) {
     console.warn('Garment analysis fallback applied:', err);
     const fallbackType = options.defaultType || options.typeHint || 'gown';
-    const fallbackSpec = generateRealisticMockSpecification(fallbackType, referenceImage);
+    const fallbackSpec = generateRealisticMockSpecification(fallbackType, primaryImage);
     return {
       success: true,
       specification: fallbackSpec,

@@ -20,7 +20,10 @@ export function draftShirtPattern(measurements = {}, parameters = {}, garmentSpe
   const {
     seamAllowance = 0.5,
     silhouette = garmentSpec.silhouette || 'tailored_fit',
+    sleeveType = garmentSpec.sleeve?.type || 'set-in',
   } = parameters;
+
+  const isRaglan = sleeveType === 'raglan';
 
   const SCALE = 12;
 
@@ -200,8 +203,8 @@ export function draftShirtPattern(measurements = {}, parameters = {}, garmentSpe
   ];
 
   const sleevePiece = createPatternPiece({
-    id: 'SHIRT_SLEEVE',
-    name: 'SET-IN SHIRT SLEEVE',
+    id: isRaglan ? 'SHIRT_RAGLAN_SLEEVE' : 'SHIRT_SLEEVE',
+    name: isRaglan ? 'RAGLAN SHIRT SLEEVE' : 'SET-IN SHIRT SLEEVE',
     category: 'shell',
     cutQuantity: 'CUT 2 (PAIR)',
     points: sleevePoints,
@@ -211,10 +214,10 @@ export function draftShirtPattern(measurements = {}, parameters = {}, garmentSpe
       y1: (sly0 + 2) * SCALE,
       x2: (slx0 + actualBicep * 0.5) * SCALE,
       y2: (sly0 + sleeveLength - 2) * SCALE,
-      label: 'SLEEVE GRAINLINE',
+      label: isRaglan ? 'RAGLAN SLEEVE GRAINLINE' : 'SLEEVE GRAINLINE',
     },
     notches: [
-      { x: (slx0 + actualBicep * 0.5) * SCALE, y: sly0 * SCALE, label: 'Crown Match to Shoulder' },
+      { x: (slx0 + actualBicep * 0.5) * SCALE, y: sly0 * SCALE, label: isRaglan ? 'Raglan Neckline Match' : 'Crown Match to Shoulder' },
     ],
   });
 

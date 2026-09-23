@@ -1,4 +1,8 @@
 import { supabase } from './supabaseClient';
+import { providerRegistry } from './ai/providerRegistry';
+import { normalizeSpecification } from './deconstruct/specificationNormalizer';
+import { logger } from '../utils/deconstructLogger';
+import { aiOrchestrator } from './ai/aiOrchestrator';
 
 const isSupabaseConfigured = Boolean(
   import.meta.env.VITE_SUPABASE_URL &&
@@ -9,9 +13,9 @@ const isSupabaseConfigured = Boolean(
 
 /**
  * Intelligent local tailoring vision & silhouette deconstruction engine.
- * Computes seam architecture, closures, internal reinforcements, and tailoring sequence.
+ * Maintained as a deterministic local heuristic fallback.
  */
-function deconstructGarmentLocally(imageBase64, options = {}) {
+export function deconstructGarmentLocally(imageBase64, options = {}) {
   let garmentType = options.garmentType || options.typeHint || options.defaultType || 'gown';
 
   if (options.filename && typeof options.filename === 'string') {
@@ -164,39 +168,136 @@ function deconstructGarmentLocally(imageBase64, options = {}) {
   };
 }
 
-/**
- * Reverse-engineers an uploaded garment image into tailored specifications.
- * Gracefully falls back to deterministic tailoring vision algorithms when edge functions are offline.
- */
-export async function deconstructGarmentImage(imageBase64, options = {}) {
-  // If Supabase is properly configured and functions are reachable, attempt remote edge invocation
-  if (isSupabaseConfigured && supabase?.functions?.invoke) {
-    try {
-      const { data, error } = await supabase.functions.invoke('deconstruct-garment', {
-        body: { image: imageBase64, options },
-      });
+export const CRITICAL_CONSTRUCTION_FIELDS = [
+  'identity.garmentType',
+  'garmentType',
+  'sleeve.type',
+  'sleeve.construction',
+  'body.frontConstruction',
+  'body.backConstruction',
+  'waistband.type',
+  'panels',
+];
 
-      if (!error && data && (data.garmentType || data.specification)) {
-        return { success: true, data: data.specification || data };
-      }
-      // If error occurred (e.g. edge function not deployed), log debug info and fallback cleanly
-      console.info('[Tailorix AI] Remote edge function not deployed on current instance; activating local vision analyzer.');
-    } catch (err) {
-      console.info('[Tailorix AI] Edge function invocation skipped; switching to local vision analyzer.');
+/**
+ * Evaluates whether any detected uncertainties require human-in-the-loop review before pattern generation.
+ */
+export function evaluateUncertainties(uncertainties = []) {
+  const critical = [];
+  const nonCritical = [];
+
+  for (const item of uncertainties) {
+    const field = item.field || '';
+    const isCrit = CRITICAL_CONSTRUCTION_FIELDS.some(
+      (cf) => field === cf || field.startsWith(`${cf}.`) || cf.startsWith(`${field}.`)
+    );
+    if (isCrit) {
+      critical.push(item);
+    } else {
+      nonCritical.push(item);
     }
   }
 
-  // Gracefully provide local deconstruction without throwing or emitting console errors
-  try {
-    const localData = deconstructGarmentLocally(imageBase64, options);
+  return {
+    critical,
+    nonCritical,
+    hasCriticalUncertainty: critical.length > 0,
+    requiresReview: critical.length > 0,
+  };
+}
+
+/**
+ * Reverse-engineers uploaded garment image(s) into a canonical GarmentSpecification.
+ * Supports multi-image analysis, analysis modes, authoritative user corrections,
+ * and passes through the active provider (OpenAIProvider by default).
+ */
+export async function deconstructGarmentImages(images, options = {}) {
+  logger.deconstruct(`Multi-image reference received (${Array.isArray(images) ? images.length : 1} items)`);
+
+  const orchestratorResult = await aiOrchestrator.analyzeGarment(images, options);
+
+  if (orchestratorResult.success && (orchestratorResult.data || orchestratorResult.specification)) {
+    const spec = orchestratorResult.data || orchestratorResult.specification;
     return {
       success: true,
-      data: localData,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      error: err?.message || 'Failed to analyze garment',
+      data: spec,
+      specification: spec,
+      observations: orchestratorResult.observations || spec.observations || [],
+      confidence: orchestratorResult.confidence ?? spec.confidence,
+      uncertainties: orchestratorResult.uncertainties || spec.uncertainties || [],
+      questionsForUser: orchestratorResult.questionsForUser || spec.questionsForUser || [],
+      sourceImages: orchestratorResult.sourceImages || spec.sourceImages || [],
+      risk: orchestratorResult.risk || spec.risk,
+      requiresReview: spec.status === 'needs_review',
     };
   }
+
+  if (orchestratorResult.status === 'error') {
+    return {
+      success: false,
+      status: 'error',
+      code: orchestratorResult.code || 'AI_ANALYSIS_FAILED',
+      error: orchestratorResult.message || 'Garment analysis could not be completed.',
+      message: orchestratorResult.message || 'Garment analysis could not be completed.',
+      retryable: Boolean(orchestratorResult.retryable),
+    };
+  }
+
+  // Fallback to local heuristic
+  const rawList = Array.isArray(images) ? images : [images];
+  const firstImg = rawList[0]?.data || rawList[0];
+  const localData = deconstructGarmentLocally(firstImg, options);
+  const canonical = normalizeSpecification(localData);
+  return {
+    success: true,
+    data: canonical,
+    specification: canonical,
+    observations: [],
+    uncertainties: [],
+    questionsForUser: [],
+    sourceImages: ['img_local_01'],
+    requiresReview: false,
+  };
+}
+
+/**
+ * Legacy single-image adapter.
+ */
+export async function deconstructGarmentImage(imageBase64, options = {}) {
+  return deconstructGarmentImages([imageBase64], options);
+}
+
+/**
+ * Merges user corrections into a specification as authoritative overrides.
+ */
+export function applyAuthoritativeCorrections(spec, corrections) {
+  const updated = {
+    ...spec,
+    userCorrections: { ...(spec?.userCorrections || {}), ...corrections },
+  };
+
+  for (const [key, val] of Object.entries(corrections)) {
+    if (key === 'garmentType') {
+      updated.garmentType = val;
+      if (updated.identity) {
+        updated.identity.garmentType = val;
+      }
+    } else if (key.startsWith('sleeve.')) {
+      const subKey = key.split('.')[1];
+      updated.sleeve = { ...(updated.sleeve || {}), [subKey]: val };
+    } else if (key.startsWith('collar.')) {
+      const subKey = key.split('.')[1];
+      updated.collar = { ...(updated.collar || {}), [subKey]: val };
+    } else if (key.startsWith('neckline.')) {
+      const subKey = key.split('.')[1];
+      updated.neckline = { ...(updated.neckline || {}), [subKey]: val };
+    } else if (key.startsWith('waistband.')) {
+      const subKey = key.split('.')[1];
+      updated.waistband = { ...(updated.waistband || {}), [subKey]: val };
+    } else {
+      updated[key] = val;
+    }
+  }
+
+  return updated;
 }

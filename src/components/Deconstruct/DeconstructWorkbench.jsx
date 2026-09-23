@@ -30,11 +30,14 @@ import { generatePattern } from '../../utils/patternEngine/patternRegistry';
 import { generatePointGradedPattern } from '../../utils/patternEngine/pointGradingEngine';
 import { exportPatternToSVG, exportPatternToDXF, exportPatternToTiledPDF } from '../../utils/patternEngine/cadExportEngine';
 import { analyzeGarmentImage } from '../../services/garmentAnalyzer';
+import { aiOrchestrator } from '../../services/ai/aiOrchestrator';
 import { renderPieceToSvgPath, calculatePieceBounds } from '../../models/patternGeometry';
 import { applySeamAllowanceToPiece } from '../../utils/patternEngine/geometricSeamOffset';
 import { SLOPER_BLOCK_TEMPLATES } from '../../templates/presetLibrary';
+import DeconstructApprovalGateModal from './DeconstructApprovalGateModal';
+import { SPEC_STATUS } from '../../models/garmentSpecification';
 
-import { Sparkles, Upload, X, Check, Image as ImageIcon, Sliders } from 'lucide-react';
+import { Sparkles, Upload, X, Check, Image as ImageIcon, Sliders, AlertTriangle } from 'lucide-react';
 
 export default function DeconstructWorkbench({ initialImage = null }) {
   // --- Master Garment Specification State ---
@@ -79,6 +82,7 @@ export default function DeconstructWorkbench({ initialImage = null }) {
   // Custom pieces and deleted piece ids
   const [customPieces, setCustomPieces] = useState([]);
   const [deletedPieceIds, setDeletedPieceIds] = useState(new Set());
+  const [showApprovalGate, setShowApprovalGate] = useState(false);
 
   // Deep-link loader for templates and saved projects from query parameters
   useEffect(() => {
@@ -297,11 +301,23 @@ export default function DeconstructWorkbench({ initialImage = null }) {
   const handleRunAIDeconstruction = async (imgData) => {
     setIsAnalyzingImage(true);
     try {
-      const result = await analyzeGarmentImage(imgData);
-      setAnalysisResult(result);
-      if (result.garmentType && result.garmentType !== garmentSpec.garmentType) {
-        handleGarmentTypeChange(result.garmentType);
-      }
+      const orchestratorResult = await aiOrchestrator.analyzeGarment(imgData, {
+        garmentSpecification: garmentSpec,
+      });
+      const formattedResult = {
+        success: orchestratorResult.success,
+        data: orchestratorResult.data || orchestratorResult.specification,
+        specification: orchestratorResult.data || orchestratorResult.specification,
+        observations: orchestratorResult.observations || [],
+        confidence: orchestratorResult.confidence,
+        uncertainties: orchestratorResult.uncertainties || [],
+        questionsForUser: orchestratorResult.questionsForUser || [],
+        sourceImages: orchestratorResult.sourceImages || [],
+        risk: orchestratorResult.risk,
+      };
+      setAnalysisResult(formattedResult);
+      setShowDeconstructModal(false);
+      setShowApprovalGate(true);
     } catch (err) {
       console.warn('Garment Deconstruction:', err);
     } finally {
@@ -309,13 +325,23 @@ export default function DeconstructWorkbench({ initialImage = null }) {
     }
   };
 
+  const handleApproveAndGenerate = (approvedSpec) => {
+    setGarmentSpec(approvedSpec);
+    const targetType = approvedSpec.identity?.garmentType || approvedSpec.garmentType;
+    if (targetType) {
+      setMeasurements(getDefaultMeasurementsForGarment(targetType));
+    }
+    setNodeOverrides({});
+    setSeamAllowanceOverrides({});
+    setDeletedPieceIds(new Set());
+    setCustomPieces([]);
+    setShowApprovalGate(false);
+  };
+
   const applyAIDeconstruction = () => {
     if (!analysisResult) return;
-    setGarmentSpec((prev) => ({
-      ...prev,
-      ...analysisResult,
-    }));
     setShowDeconstructModal(false);
+    setShowApprovalGate(true);
   };
 
   // Toggle Sizing for Grading
@@ -383,6 +409,34 @@ export default function DeconstructWorkbench({ initialImage = null }) {
 
           {/* Render Active Workspace View (Wrapped in rounded canvas frame) */}
           <div className="flex-1 w-full h-full rounded-2xl overflow-hidden border border-[#222427] relative">
+            {/* Clarification Gate Required Overlay */}
+            {basePattern?.status === 'needs_clarification' && (
+              <div className="absolute inset-0 z-30 bg-[#0A0B0C]/85 backdrop-blur-md flex items-center justify-center p-6">
+                <div className="bg-[#161719] p-6 rounded-2xl border border-amber-500/40 shadow-2xl max-w-md w-full text-center space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 mx-auto flex items-center justify-center">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-[#EDEDF0]">Garment Resolution Required</h4>
+                    <p className="text-xs text-[#8A8B93] mt-1.5 leading-relaxed">
+                      {basePattern.reason || 'Garment type could not be determined deterministically. Please confirm foundation block.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-center pt-2">
+                    {(basePattern.candidates || ['shirt', 'trouser', 'jeans', 'jacket', 'dress', 'skirt']).map((candidate) => (
+                      <button
+                        key={candidate}
+                        onClick={() => handleGarmentTypeChange(candidate)}
+                        className="px-3.5 py-1.5 text-xs font-semibold bg-[#222428] hover:bg-[#C5A059] hover:text-[#101112] text-[#EDEDF0] rounded-xl border border-[#35363D] transition-all capitalize"
+                      >
+                        {candidate}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeViewMode === 'cad' && (
               <ProfessionalCADCanvas
                 pieces={pieces}
@@ -534,6 +588,16 @@ export default function DeconstructWorkbench({ initialImage = null }) {
           </div>
         </div>
       )}
+
+      {/* Human Mapping & Approval Gate Modal */}
+      <DeconstructApprovalGateModal
+        isOpen={showApprovalGate}
+        onClose={() => setShowApprovalGate(false)}
+        initialSpec={analysisResult || garmentSpec}
+        referenceImage={referenceImage}
+        onApproveAndGenerate={handleApproveAndGenerate}
+        isAnalyzing={isAnalyzingImage}
+      />
     </div>
   );
 }

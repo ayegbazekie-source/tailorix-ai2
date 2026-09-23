@@ -185,8 +185,19 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     setActiveSubTab(tab);
     try {
       window.history.replaceState(null, '', tab === 'cutting' ? '/studio' : '/cad');
+      window.dispatchEvent(new CustomEvent('tailorix-workspace-tab-changed', { detail: { tab } }));
     } catch (e) {}
   };
+
+  useEffect(() => {
+    const handleRemoteSwitch = (e) => {
+      if (e.detail?.tab && (e.detail.tab === 'drafting' || e.detail.tab === 'cutting')) {
+        handleSelectSubTab(e.detail.tab);
+      }
+    };
+    window.addEventListener('tailorix-switch-workspace-tab', handleRemoteSwitch);
+    return () => window.removeEventListener('tailorix-switch-workspace-tab', handleRemoteSwitch);
+  }, []);
 
   // -------------------------------------------------------------------------
   // 2. Sketchbook Tools State
@@ -1065,6 +1076,43 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   // -------------------------------------------------------------------------
   // Cutting Sheet Management (Spawning, Duplicating, Mirroring & Seam Allowances)
   // -------------------------------------------------------------------------
+  const handleAddBodiceBlock = (type) => {
+    if (type === 'front') {
+      addCuttingSheet({
+        name: 'Front Bodice Sheet',
+        type: 'bodice_front',
+        width: 360,
+        height: 480,
+        isMirrored: true,
+        color: '#ffffff',
+        opacity: 0.95,
+        hasSeamAllowance: true,
+      });
+    } else if (type === 'back') {
+      addCuttingSheet({
+        name: 'Back Bodice Sheet',
+        type: 'bodice_back',
+        width: 340,
+        height: 460,
+        isMirrored: true,
+        color: '#ffffff',
+        opacity: 0.95,
+        hasSeamAllowance: true,
+      });
+    } else if (type === 'sleeve') {
+      addCuttingSheet({
+        name: 'Sleeve Sheet',
+        type: 'sleeve',
+        width: 280,
+        height: 460,
+        isMirrored: false,
+        color: '#ffffff',
+        opacity: 0.95,
+        hasSeamAllowance: true,
+      });
+    }
+  };
+
   const addCuttingSheet = (config = {}) => {
     const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
     const vpW = typeof window !== 'undefined' ? window.innerWidth : 1024;
@@ -1080,28 +1128,31 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         // Mirrored sheet effective total width is 2 * defaultW
         // Shrink half-width to max 125px so total width is 250px (fits safely inside 360-390px mobile screens)
         defaultW = Math.min(config.width ? Math.min(config.width, 125) : 125, 125);
-        defaultH = Math.min(config.height || 300, 300);
+        defaultH = Math.min(config.height || 280, 280);
       } else {
         defaultW = Math.min(config.width || 220, 220);
-        defaultH = Math.min(config.height || 300, 300);
+        defaultH = Math.min(config.height || 280, 280);
       }
     }
 
     const effW = isMirrored ? defaultW * 2 : defaultW;
     const effH = defaultH;
 
-    // Align on 20px drafting grid (or center in first screen on mobile)
+    // User requirement: "Spawn cutting sheets and Auto Bodice blocks should work similarly as the spawn cutting sheets, they bring in the cut sheet bodice straight to the top of the screen. Introducing a cut sheet from these drawer should come straight to the top region of the board not at the lower region."
     const sheetCount = cuttingSheets.length;
-    let gridX = config.x !== undefined ? config.x : Math.round((120 + (sheetCount % 4) * 60) / 20) * 20;
-    let gridY = config.y !== undefined ? config.y : Math.round((80 + (sheetCount % 4) * 40) / 20) * 20;
-
-    if (isMobile) {
-      // Center accurately on the mobile screen inside the first screen
-      const currentZoom = Math.min(zoom, 0.65);
-      if (zoom > 0.65) setZoom(0.65);
-      gridX = Math.round((vpW / 2 - (effW * currentZoom) / 2 - panOffset.x) / currentZoom);
-      gridY = Math.max(15, Math.round(((vpH - 150) / 2 - (effH * currentZoom) / 2 - panOffset.y) / currentZoom));
+    const effectiveZoom = isMobile ? Math.min(zoom, 0.65) : zoom;
+    if (isMobile && zoom > 0.65) {
+      setZoom(0.65);
     }
+
+    // Top screen region offset: 15px on mobile, 25px on desktop below the workspace header
+    const targetTopScreenY = isMobile ? 15 : (25 + (sheetCount % 4) * 15);
+    let gridX = config.x !== undefined
+      ? config.x
+      : Math.round(((vpW / 2) - (effW * effectiveZoom) / 2 - panOffset.x) / effectiveZoom + (isMobile ? 0 : ((sheetCount % 3) - 1) * 20));
+    let gridY = config.y !== undefined
+      ? config.y
+      : Math.round((targetTopScreenY - panOffset.y) / effectiveZoom);
 
     const sheetId = `sheet_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const sheetName = config.name || `Cutting Sheet ${sheetCount + 1}`;
@@ -2716,22 +2767,32 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       {/* Cutting Table:          [←/→] [Undo] [Redo] [Layers] [Zoom] [Move] [⋯]   */}
       {/* ========================================================================= */}
       <div className="md:hidden h-13 px-2.5 bg-[#0d1322] border-b border-slate-800/90 flex items-center justify-between z-40 shrink-0 select-none shadow-md">
-        {/* Left: Tab Switching Arrow button + Workspace badge */}
-        <div className="flex items-center gap-1.5">
+        {/* Left: Workspace Sub-Tabs (Pattern Drafting Board & Cutting Table) */}
+        <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800/90 text-xs">
           <button
-            onClick={() => handleSelectSubTab(activeSubTab === 'drafting' ? 'cutting' : 'drafting')}
-            className="p-1.5 rounded-lg text-amber-400 hover:text-white hover:bg-slate-800/70 transition-all flex items-center justify-center"
-            title={activeSubTab === 'drafting' ? 'Switch to Cutting Table' : 'Switch to Pattern Drafting Board'}
+            onClick={() => handleSelectSubTab('drafting')}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all ${
+              activeSubTab === 'drafting'
+                ? 'bg-amber-500 text-slate-950 shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="Pattern Drafting Board"
           >
-            {activeSubTab === 'drafting' ? (
-              <ArrowRight className="w-4 h-4" />
-            ) : (
-              <ArrowLeft className="w-4 h-4" />
-            )}
+            <PenTool className="w-3 h-3" />
+            <span>Drafting</span>
           </button>
-          <div className="w-6 h-6 rounded bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-black text-[11px] shadow-xs">
-            TX
-          </div>
+          <button
+            onClick={() => handleSelectSubTab('cutting')}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all ${
+              activeSubTab === 'cutting'
+                ? 'bg-amber-500 text-slate-950 shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="Cutting Table"
+          >
+            <Scissors className="w-3 h-3" />
+            <span>Cutting</span>
+          </button>
         </div>
 
         {/* Center/Right: Action controls sequence */}
@@ -3039,28 +3100,30 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                   <button
                     onClick={() => {
                       handleSelectSubTab('drafting');
+                      setMobileHeaderDrawerOpen(false);
                     }}
-                    className={`py-1.5 px-2 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-all ${
+                    className={`py-2 px-2 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
                       activeSubTab === 'drafting'
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <PenTool className="w-3.5 h-3.5" />
-                    <span>Drafting</span>
+                    <span>Pattern Drafting</span>
                   </button>
                   <button
                     onClick={() => {
                       handleSelectSubTab('cutting');
+                      setMobileHeaderDrawerOpen(false);
                     }}
-                    className={`py-1.5 px-2 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-all ${
+                    className={`py-2 px-2 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
                       activeSubTab === 'cutting'
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <Scissors className="w-3.5 h-3.5" />
-                    <span>Cutting</span>
+                    <span>Cutting Table</span>
                   </button>
                 </div>
               </div>

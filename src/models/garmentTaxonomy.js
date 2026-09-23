@@ -188,10 +188,16 @@ export const GARMENT_TAXONOMY = GARMENT_TYPES;
 
 /**
  * Normalizes any category or string input into an authoritative GARMENT_TYPES definition.
+ * If fallback option is explicitly false, returns null for unmapped inputs.
  */
-export function getGarmentType(input) {
-  if (!input) return GARMENT_TYPES.TROUSER;
+export function getGarmentType(input, options = {}) {
+  const allowFallback = options.fallback !== false;
+  if (!input) return allowFallback ? GARMENT_TYPES.TROUSER : null;
   const key = String(input).trim().toLowerCase().replace(/[\s-]/g, '_');
+
+  if (key === 'unknown' || key === 'undefined' || key === 'none') {
+    return null;
+  }
 
   // Direct match
   for (const g of Object.values(GARMENT_TYPES)) {
@@ -228,5 +234,6 @@ export function getGarmentType(input) {
     romper: GARMENT_TYPES.JUMPSUIT,
   };
 
-  return aliases[key] || GARMENT_TYPES.TROUSER;
+  if (aliases[key]) return aliases[key];
+  return allowFallback ? GARMENT_TYPES.TROUSER : null;
 }

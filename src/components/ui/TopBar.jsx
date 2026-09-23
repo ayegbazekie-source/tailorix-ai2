@@ -72,6 +72,12 @@ export function TopBar() {
     return () => window.removeEventListener('tailorix-workspace-tab-changed', handleTabChange);
   }, []);
 
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('tailorix-mobile-nav-toggle', { detail: { isOpen: showMobileNav } })
+    );
+  }, [showMobileNav]);
+
   const handleSelectWorkspace = (tab) => {
     setActiveWorkspaceTab(tab);
     if (location.pathname === '/cad' || location.pathname === '/studio') {
@@ -93,7 +99,7 @@ export function TopBar() {
   ];
 
   return (
-    <header className="h-13 bg-[#121315] border-b border-[#222427] px-3 sm:px-5 flex items-center justify-between z-40 shrink-0 select-none">
+    <header className={`h-13 bg-[#121315] border-b border-[#222427] px-3 sm:px-5 flex items-center justify-between ${showMobileNav ? 'z-[100]' : 'z-40'} shrink-0 select-none`}>
       {/* Brand Identity */}
       <div className="flex items-center gap-6">
         <NavLink to="/cad" className="flex items-center gap-2.5 group">
@@ -261,7 +267,13 @@ export function TopBar() {
       {showMobileNav && (
         <div
           ref={mobileNavRef}
-          className="md:hidden absolute top-13 left-0 right-0 bg-[#141517] border-b border-[#2D2E32] p-4 shadow-2xl z-50 flex flex-col gap-2 animate-in fade-in duration-150"
+          className="md:hidden absolute top-13 left-0 right-0 bg-[#141517] border-b border-[#2D2E32] shadow-2xl z-[100] flex flex-col gap-2 animate-in fade-in duration-150"
+          style={{
+            paddingBottom: '16px',
+            paddingRight: '13px',
+            paddingLeft: '16px',
+            paddingTop: '180px',
+          }}
         >
           <div className="text-[11px] font-mono uppercase text-[#C5A059] tracking-wider mb-1">
             Workspaces & Modules

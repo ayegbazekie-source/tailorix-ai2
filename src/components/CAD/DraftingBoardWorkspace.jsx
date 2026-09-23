@@ -435,6 +435,45 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [mobileZoomPopoverOpen, setMobileZoomPopoverOpen] = useState(false);
   const [cuttingTableZoom, setCuttingTableZoom] = useState(0.5);
 
+  // Carousel Slider & Navigation state for Header Section (both tabs)
+  const headerCarouselRef = useRef(null);
+  const [canScrollCarouselLeft, setCanScrollCarouselLeft] = useState(false);
+  const [canScrollCarouselRight, setCanScrollCarouselRight] = useState(true);
+
+  const checkCarouselScroll = useCallback(() => {
+    if (headerCarouselRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = headerCarouselRef.current;
+      setCanScrollCarouselLeft(scrollLeft > 4);
+      setCanScrollCarouselRight(scrollLeft + clientWidth < scrollWidth - 4);
+    }
+  }, []);
+
+  const handleCarouselScrollLeft = () => {
+    if (headerCarouselRef.current) {
+      headerCarouselRef.current.scrollBy({ left: -140, behavior: 'smooth' });
+    }
+  };
+
+  const handleCarouselScrollRight = () => {
+    if (headerCarouselRef.current) {
+      headerCarouselRef.current.scrollBy({ left: 140, behavior: 'smooth' });
+    }
+  };
+
+  // Listen for TopBar mobile navigation state so sketchbook toolbar & header sit behind when open
+  const [isTopBarNavOpen, setIsTopBarNavOpen] = useState(false);
+  useEffect(() => {
+    const handleNavToggle = (e) => {
+      setIsTopBarNavOpen(Boolean(e.detail?.isOpen));
+    };
+    window.addEventListener('tailorix-mobile-nav-toggle', handleNavToggle);
+    return () => window.removeEventListener('tailorix-mobile-nav-toggle', handleNavToggle);
+  }, []);
+
+  useEffect(() => {
+    checkCarouselScroll();
+  }, [activeSubTab, checkCarouselScroll]);
+
   const handleCuttingHistoryChange = useCallback(
     ({ canUndo, canRedo, showLayers, isMoveEnabled, isFabricVisible: fVis, tableZoom }) => {
       setCuttingCanUndo((prev) => (prev !== canUndo ? canUndo : prev));
@@ -1111,6 +1150,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         hasSeamAllowance: true,
       });
     }
+  };
+
+  // Unified Bodice & Cut Sheet Spawner (Connects +Bodice in Header to Spawn Cut Sheets in Drawer)
+  const handleSpawnBodiceCutSheet = (type) => {
+    if (type === 'custom') {
+      setActiveTool((curr) => (curr === 'draw_sheet' ? 'chalk' : 'draw_sheet'));
+      return;
+    }
+    handleAddBodiceBlock(type);
   };
 
   const addCuttingSheet = (config = {}) => {
@@ -2766,9 +2814,9 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       {/* Pattern Drafting Board: [←/→] [Undo] [Redo] [Layers] [Zoom] [⋯]          */}
       {/* Cutting Table:          [←/→] [Undo] [Redo] [Layers] [Zoom] [Move] [⋯]   */}
       {/* ========================================================================= */}
-      <div className="md:hidden h-13 px-2.5 bg-[#0d1322] border-b border-slate-800/90 flex items-center justify-between z-40 shrink-0 select-none shadow-md">
+      <div className={`md:hidden h-13 px-1.5 sm:px-2 bg-[#0d1322] border-b border-slate-800/90 flex items-center justify-between ${isTopBarNavOpen ? 'z-10' : 'z-30'} shrink-0 select-none shadow-md gap-1`}>
         {/* Left: Workspace Sub-Tabs (Pattern Drafting Board & Cutting Table) */}
-        <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800/90 text-xs">
+        <div className="flex items-center gap-1 bg-[#060912] p-0.5 rounded-xl border border-slate-800/90 text-xs shrink-0">
           <button
             onClick={() => handleSelectSubTab('drafting')}
             className={`px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all ${
@@ -2795,13 +2843,30 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           </button>
         </div>
 
-        {/* Center/Right: Action controls sequence */}
-        <div className="flex items-center gap-1">
+        {/* Carousel Slider: Left slide arrow */}
+        <button
+          onClick={handleCarouselScrollLeft}
+          className={`p-1 rounded-md text-slate-400 hover:text-amber-400 hover:bg-slate-800 shrink-0 transition-opacity ${
+            canScrollCarouselLeft ? 'opacity-100' : 'opacity-25 pointer-events-none'
+          }`}
+          title="Slide carousel left"
+          aria-label="Slide carousel left"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Center/Right: Action controls sequence Carousel Track */}
+        <div
+          ref={headerCarouselRef}
+          onScroll={checkCarouselScroll}
+          className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none touch-pan-x scroll-smooth py-0.5 px-0.5"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
           {/* Undo */}
           <button
             onClick={handleUndo}
             disabled={activeSubTab === 'cutting' ? !cuttingCanUndo : undoStack.length === 0}
-            className={`p-1.5 rounded-lg transition-all ${
+            className={`p-1.5 rounded-lg transition-all shrink-0 ${
               (activeSubTab === 'cutting' ? cuttingCanUndo : undoStack.length > 0)
                 ? 'text-slate-200 hover:text-white hover:bg-slate-800'
                 : 'text-slate-600 opacity-40 cursor-not-allowed'
@@ -2815,7 +2880,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           <button
             onClick={handleRedo}
             disabled={activeSubTab === 'cutting' ? !cuttingCanRedo : redoStack.length === 0}
-            className={`p-1.5 rounded-lg transition-all ${
+            className={`p-1.5 rounded-lg transition-all shrink-0 ${
               (activeSubTab === 'cutting' ? cuttingCanRedo : redoStack.length > 0)
                 ? 'text-slate-200 hover:text-white hover:bg-slate-800'
                 : 'text-slate-600 opacity-40 cursor-not-allowed'
@@ -2828,7 +2893,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           {/* Layers */}
           <button
             onClick={handleToggleLayersHeader}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-bold transition-all ${
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-bold transition-all shrink-0 ${
               (activeSubTab === 'cutting' ? cuttingShowLayers : showLayerPanel)
                 ? 'bg-amber-500/20 border-amber-400 text-amber-300'
                 : 'bg-[#060912] border-slate-800 text-slate-300'
@@ -2841,8 +2906,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </span>
           </button>
 
-          {/* Zoom */}
-          <div className="relative">
+          {/* Zoom (div:nth-of-type(1) inside controls track) */}
+          <div className="relative shrink-0">
             <button
               onClick={() => setMobileZoomPopoverOpen((prev) => !prev)}
               className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#060912] border border-slate-800 text-xs font-mono font-bold text-amber-300 hover:bg-slate-800 transition-all"
@@ -2858,7 +2923,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
             {/* Mobile Zoom Popover */}
             {mobileZoomPopoverOpen && (
-              <div className="absolute right-0 top-full mt-2 z-50 bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2.5 w-48 text-slate-200 space-y-2">
+              <div className="absolute right-0 top-full mt-2 z-[90] bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2.5 w-48 text-slate-200 space-y-2">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-1 text-[11px] font-bold text-amber-400 uppercase">
                   <span>Zoom Level</span>
                   <button
@@ -2950,36 +3015,78 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             )}
           </div>
 
-          {/* Cutting Table Only: Move Tool Toggle */}
+          {/* Cutting Table Specific Carousel Items */}
           {activeSubTab === 'cutting' && (
-            <button
-              onClick={() => {
-                if (bigCuttingTableRef.current?.toggleMoveMode) {
-                  bigCuttingTableRef.current.toggleMoveMode();
-                } else {
-                  setIsFabricMoveEnabled((prev) => !prev);
-                }
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all ${
-                isFabricMoveEnabled
-                  ? 'bg-amber-400 text-slate-950 shadow-gold-sm ring-1 ring-amber-300'
-                  : 'bg-[#060912] text-slate-300 border border-slate-800'
-              }`}
-              title="Toggle Move Tool"
-            >
-              <Move className="w-3.5 h-3.5" />
-              <span>Move</span>
-              <span className="text-[9px] font-mono font-black">{isFabricMoveEnabled ? 'ON' : 'OFF'}</span>
-            </button>
+            <>
+              {/* Move Tool Toggle */}
+              <button
+                onClick={() => {
+                  if (bigCuttingTableRef.current?.toggleMoveMode) {
+                    bigCuttingTableRef.current.toggleMoveMode();
+                  } else {
+                    setIsFabricMoveEnabled((prev) => !prev);
+                  }
+                }}
+                className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all shrink-0 ${
+                  isFabricMoveEnabled
+                    ? 'bg-amber-400 text-slate-950 shadow-gold-sm ring-1 ring-amber-300'
+                    : 'bg-[#060912] text-slate-300 border border-slate-800'
+                }`}
+                title="Toggle Move Tool"
+              >
+                <Move className="w-3.5 h-3.5" />
+                <span>Move</span>
+                <span className="text-[9px] font-mono font-black">{isFabricMoveEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {/* Hide / Show Fabric Toggle */}
+              <button
+                onClick={() => {
+                  if (bigCuttingTableRef.current?.toggleFabricVisibility) {
+                    bigCuttingTableRef.current.toggleFabricVisibility();
+                  } else {
+                    setIsFabricVisible((prev) => !prev);
+                  }
+                }}
+                className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all shrink-0 ${
+                  isFabricVisible
+                    ? 'text-slate-300 hover:text-white hover:bg-slate-800'
+                    : 'bg-emerald-500 text-slate-950 shadow-sm ring-1 ring-emerald-400'
+                }`}
+                title="Toggle Fabric Visibility"
+              >
+                {isFabricVisible ? (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[10px] whitespace-nowrap">Hide Fabric</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3.5 h-3.5 text-slate-950" />
+                    <span className="text-[10px] whitespace-nowrap">Rack Active</span>
+                  </>
+                )}
+              </button>
+
+              {/* Fit to Viewport */}
+              <button
+                onClick={() => bigCuttingTableRef.current?.centerAndFitTable?.()}
+                className="px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 bg-[#060912] border border-slate-800 text-slate-300 hover:text-white shrink-0"
+                title="Fit to Viewport"
+              >
+                <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[10px]">Fit</span>
+              </button>
+            </>
           )}
 
-          {/* Pattern Drafting Board Only: Mirror Tool Quick Toggle & Auto Bodice Generation */}
+          {/* Pattern Drafting Board Specific Carousel Items */}
           {activeSubTab === 'drafting' && (
             <>
               {/* Mirror Tool Button in Mobile Header */}
               <button
                 onClick={handleToggleSymmetry}
-                className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all border ${
+                className={`px-2 py-1 text-xs rounded-lg font-bold flex items-center gap-1 transition-all border shrink-0 ${
                   symmetryEnabled
                     ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-gold-sm font-black'
                     : 'bg-[#060912] border-slate-800 text-slate-300 hover:text-white'
@@ -2987,57 +3094,90 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                 title="Mirror Tool: Symmetrical drawing from top to bottom of screen"
               >
                 <FlipHorizontal className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden min-[380px]:inline text-[10px]">Mirror</span>
+                <span className="text-[10px]">Mirror</span>
               </button>
 
-              {/* Auto Bodice Spawner in Mobile Header */}
-              <div className="relative">
+              {/* +Bodice Spawner (div:nth-of-type(2) inside controls track) connected to Spawn cut sheets */}
+              <div className="relative shrink-0">
                 <button
                   onClick={() => setMobileBodiceMenuOpen((prev) => !prev)}
-                  className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-300 text-xs font-bold flex items-center gap-1 transition-all"
-                  title="Generate Automatic Bodice Block"
+                  className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-300 text-xs font-bold flex items-center gap-1 transition-all whitespace-nowrap"
+                  title="Spawn Cut Sheets (+Bodice): Front, Back, Sleeve & Custom"
                 >
-                  <Shirt className="w-3.5 h-3.5" />
-                  <span className="hidden min-[380px]:inline">+ Bodice</span>
+                  <Shirt className="w-3.5 h-3.5 text-amber-400" />
+                  <span>+ Bodice</span>
                 </button>
                 {mobileBodiceMenuOpen && (
-                  <div className="absolute right-0 top-full mt-2 z-50 bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2 w-48 text-slate-200 space-y-1">
+                  <div className="absolute right-0 top-full mt-2 z-[90] bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2 w-52 text-slate-200 space-y-1">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-1 px-1 text-[11px] font-bold text-amber-400 uppercase">
-                      <span>Auto Bodice Blocks</span>
+                      <span>Spawn Cut Sheets (+Bodice)</span>
                       <button onClick={() => setMobileBodiceMenuOpen(false)} className="text-slate-400 hover:text-white">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <button
                       onClick={() => {
-                        handleAddBodiceBlock('front');
+                        handleSpawnBodiceCutSheet('front');
                         setMobileBodiceMenuOpen(false);
                       }}
                       className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
                     >
-                      <span>Front Bodice</span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                      <span className="flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Front Bodice Sheet</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                     </button>
                     <button
                       onClick={() => {
-                        handleAddBodiceBlock('back');
+                        handleSpawnBodiceCutSheet('back');
                         setMobileBodiceMenuOpen(false);
                       }}
                       className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
                     >
-                      <span>Back Bodice</span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                      <span className="flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Back Bodice Sheet</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                     </button>
                     <button
                       onClick={() => {
-                        handleAddBodiceBlock('sleeve');
+                        handleSpawnBodiceCutSheet('sleeve');
                         setMobileBodiceMenuOpen(false);
                       }}
                       className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
                     >
-                      <span>Fitted Sleeve</span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Auto</span>
+                      <span className="flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Sleeve Sheet</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                     </button>
+                    <button
+                      onClick={() => {
+                        handleSpawnBodiceCutSheet('custom');
+                        setMobileBodiceMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Square className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Draw Custom Sheet</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">Tool</span>
+                    </button>
+                    <div className="pt-1 border-t border-slate-800">
+                      <button
+                        onClick={() => {
+                          setMobileBodiceMenuOpen(false);
+                          setMobileHeaderDrawerOpen(true);
+                        }}
+                        className="w-full text-center py-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300"
+                      >
+                        Open in Drawer Options →
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3047,18 +3187,30 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           {/* More Options [⋯] */}
           <button
             onClick={() => setMobileHeaderDrawerOpen(true)}
-            className="p-1.5 rounded-lg bg-[#060912] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-all"
+            className="p-1.5 rounded-lg bg-[#060912] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-all shrink-0"
             title="More Actions"
           >
             <MoreHorizontal className="w-4 h-4 text-amber-400" />
           </button>
         </div>
+
+        {/* Carousel Slider: Right slide arrow */}
+        <button
+          onClick={handleCarouselScrollRight}
+          className={`p-1 rounded-md text-slate-400 hover:text-amber-400 hover:bg-slate-800 shrink-0 transition-opacity ${
+            canScrollCarouselRight ? 'opacity-100' : 'opacity-25 pointer-events-none'
+          }`}
+          title="Slide carousel right"
+          aria-label="Slide carousel right"
+        >
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Drafting / Cutting Options Drawer (Positioned correctly on screen, refined typography, and scrolling effect) */}
       {mobileHeaderDrawerOpen && (
         <div
-          className="fixed top-13 md:top-0 right-0 bottom-0 left-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity duration-200"
+          className="fixed top-13 md:top-0 right-0 bottom-0 left-0 z-[100] flex justify-end bg-black/60 backdrop-blur-xs transition-opacity duration-200"
           onClick={() => setMobileHeaderDrawerOpen(false)}
         >
           <div
@@ -3155,78 +3307,68 @@ export default function DraftingBoardWorkspace({ initialTab }) {
 
                   {/* Bodice Cutting Sheets */}
                   <div className="space-y-2">
-                    <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Spawn Cutting Sheets</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                        Spawn Cut Sheets (+Bodice)
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-400">Connected to Header</span>
+                    </div>
                     <div className="grid grid-cols-1 gap-1.5">
                       <button
                         onClick={() => {
-                          addCuttingSheet({
-                            name: 'Front Bodice Sheet',
-                            type: 'bodice_front',
-                            width: 360,
-                            height: 480,
-                            isMirrored: true,
-                            color: '#ffffff',
-                            opacity: 0.95,
-                            hasSeamAllowance: true,
-                          });
+                          handleSpawnBodiceCutSheet('front');
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center justify-between transition-all"
                       >
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Front Bodice Sheet</span>
+                        <div className="flex items-center gap-2">
+                          <Plus className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Front Bodice Sheet</span>
+                        </div>
+                        <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                       </button>
                       <button
                         onClick={() => {
-                          addCuttingSheet({
-                            name: 'Back Bodice Sheet',
-                            type: 'bodice_back',
-                            width: 340,
-                            height: 460,
-                            isMirrored: true,
-                            color: '#ffffff',
-                            opacity: 0.95,
-                            hasSeamAllowance: true,
-                          });
+                          handleSpawnBodiceCutSheet('back');
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center justify-between transition-all"
                       >
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Back Bodice Sheet</span>
+                        <div className="flex items-center gap-2">
+                          <Plus className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Back Bodice Sheet</span>
+                        </div>
+                        <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                       </button>
                       <button
                         onClick={() => {
-                          addCuttingSheet({
-                            name: 'Sleeve Sheet',
-                            type: 'sleeve',
-                            width: 280,
-                            height: 460,
-                            isMirrored: false,
-                            color: '#ffffff',
-                            opacity: 0.95,
-                            hasSeamAllowance: true,
-                          });
+                          handleSpawnBodiceCutSheet('sleeve');
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center gap-2 transition-all"
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium flex items-center justify-between transition-all"
                       >
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Sleeve Sheet</span>
+                        <div className="flex items-center gap-2">
+                          <Plus className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Sleeve Sheet</span>
+                        </div>
+                        <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
                       </button>
                       <button
                         onClick={() => {
-                          setActiveTool((curr) => (curr === 'draw_sheet' ? 'chalk' : 'draw_sheet'));
+                          handleSpawnBodiceCutSheet('custom');
                           setMobileHeaderDrawerOpen(false);
                         }}
-                        className={`w-full py-2 px-3 rounded-xl border font-medium flex items-center gap-2 transition-all ${
+                        className={`w-full py-2 px-3 rounded-xl border font-medium flex items-center justify-between transition-all ${
                           activeTool === 'draw_sheet'
                             ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
                             : 'bg-slate-800/40 hover:bg-slate-800 border-slate-800 text-slate-300'
                         }`}
                       >
-                        <Square className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Draw Custom Sheet</span>
+                        <div className="flex items-center gap-2">
+                          <Square className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Draw Custom Sheet</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">Tool</span>
                       </button>
                       <button
                         onClick={() => {
@@ -3452,7 +3594,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         </div>
 
         {/* Dynamic Contextual Action Buttons depending on Active Sub-Tab */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none py-1">
           {/* DRAFTING BOARD SPECIFIC ACTIONS: BODICE BUTTONS SPAWN CUTTING SHEETS */}
           {activeSubTab === 'drafting' && (
             <div className="flex items-center gap-1 bg-[#060912] border border-amber-500/40 rounded-xl p-1 shadow-xs">
@@ -3751,7 +3893,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
         {/* SKETCHBOOK TOOLS SIDEBAR (Collapsible Floating Panel)                   */}
         {/* ======================================================================= */}
         {isToolsCollapsed ? (
-          <div className="absolute top-4 left-4 z-50 bg-[#0d1322]/95 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-2xl w-13 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col items-center gap-2">
+          <div className={`absolute top-4 left-4 ${isTopBarNavOpen || mobileHeaderDrawerOpen ? 'z-10 pointer-events-none opacity-60' : 'z-20'} bg-[#0d1322]/95 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-2xl w-13 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col items-center gap-2`}>
             <button
               onClick={() => setIsToolsCollapsed(false)}
               className="p-2 hover:bg-slate-800 text-amber-400 hover:text-amber-300 rounded-xl transition-all"
@@ -3907,7 +4049,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
             </button>
           </div>
         ) : (
-          <div className="absolute top-4 left-4 z-50 bg-[#0d1322]/95 backdrop-blur-md p-3.5 rounded-2xl border border-slate-800 shadow-2xl w-56 sm:w-60 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col gap-3">
+          <div className={`absolute top-4 left-4 ${isTopBarNavOpen || mobileHeaderDrawerOpen ? 'z-10 pointer-events-none opacity-60' : 'z-20'} bg-[#0d1322]/95 backdrop-blur-md p-3.5 rounded-2xl border border-slate-800 shadow-2xl w-56 sm:w-60 max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain touch-pan-y custom-scrollbar text-slate-100 flex flex-col gap-3`}>
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
               <span className="text-[11px] font-bold tracking-wider text-amber-400 uppercase">
                 Sketchbook Tools

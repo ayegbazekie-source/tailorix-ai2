@@ -6,8 +6,11 @@
 export const GARMENT_FAMILIES = {
   BOTTOMS: 'bottoms',
   TOPS: 'tops',
+  HOODIES: 'hoodies_sweatshirts',
   OUTERWEAR: 'outerwear',
-  DRESSES_SKIRTS: 'dresses_skirts',
+  DRESSES: 'dresses',
+  SKIRTS: 'skirts',
+  DRESSES_SKIRTS: 'dresses',
   ONE_PIECE: 'one_piece',
   CUSTOM: 'custom',
 };
@@ -86,6 +89,26 @@ export const GARMENT_TYPES = {
     supportedPieces: ['FRONT_BODY', 'BACK_BODY', 'SLEEVE', 'NECKBAND'],
     defaultSeamAllowance: 0.375,
   },
+  HOODIE: {
+    id: 'hoodie',
+    family: GARMENT_FAMILIES.HOODIES,
+    name: 'Pullover / Zip Hoodie',
+    description: 'Casual knit hoodie with contoured hood panels, kangaroo pocket, set-in/raglan sleeves, and rib knit cuffs/hem.',
+    silhouettes: ['relaxed_drop_shoulder', 'athletic_fitted', 'oversized_box'],
+    defaultSilhouette: 'relaxed_drop_shoulder',
+    supportedPieces: ['FRONT_BODY', 'BACK_BODY', 'SLEEVE', 'HOOD_SIDE', 'KANGAROO_POCKET', 'RIB_HEM', 'RIB_CUFF'],
+    defaultSeamAllowance: 0.375,
+  },
+  SWEATSHIRT: {
+    id: 'sweatshirt',
+    family: GARMENT_FAMILIES.HOODIES,
+    name: 'Crewneck Sweatshirt',
+    description: 'Knit sweatshirt with rib collar neckband, set-in sleeves, and rib cuffs/hem.',
+    silhouettes: ['classic_crew', 'relaxed_oversized'],
+    defaultSilhouette: 'classic_crew',
+    supportedPieces: ['FRONT_BODY', 'BACK_BODY', 'SLEEVE', 'RIB_COLLAR', 'RIB_HEM', 'RIB_CUFF'],
+    defaultSeamAllowance: 0.375,
+  },
 
   // Outerwear
   JACKET: {
@@ -132,7 +155,7 @@ export const GARMENT_TYPES = {
   // Dresses & Skirts
   SKIRT: {
     id: 'skirt',
-    family: GARMENT_FAMILIES.DRESSES_SKIRTS,
+    family: GARMENT_FAMILIES.SKIRTS,
     name: 'Tailored Skirt',
     description: 'Woven skirt block with waist darts, contour waistband, and rear vent.',
     silhouettes: ['pencil', 'a_line', 'straight', 'flared'],
@@ -142,7 +165,7 @@ export const GARMENT_TYPES = {
   },
   DRESS: {
     id: 'dress',
-    family: GARMENT_FAMILIES.DRESSES_SKIRTS,
+    family: GARMENT_FAMILIES.DRESSES,
     name: 'Day / Sheath Dress',
     description: 'Fitted sheath or shirt-dress with bodice darts, defined waist, and integrated skirt.',
     silhouettes: ['sheath_fitted', 'fit_and_flare', 'shift'],
@@ -152,7 +175,7 @@ export const GARMENT_TYPES = {
   },
   GOWN: {
     id: 'gown',
-    family: GARMENT_FAMILIES.DRESSES_SKIRTS,
+    family: GARMENT_FAMILIES.DRESSES,
     name: 'Evening / Formal Gown',
     description: 'Full-length evening dress with structured bodice, French darts, and flowing skirt.',
     silhouettes: ['mermaid', 'column_sheath', 'ballgown', 'bias_cut'],
@@ -195,7 +218,7 @@ export function getGarmentType(input, options = {}) {
   if (!input) return allowFallback ? GARMENT_TYPES.TROUSER : null;
   const key = String(input).trim().toLowerCase().replace(/[\s-]/g, '_');
 
-  if (key === 'unknown' || key === 'undefined' || key === 'none') {
+  if (key === 'unknown' || key === 'undefined' || key === 'none' || key === 'uncertain') {
     return null;
   }
 
@@ -209,6 +232,12 @@ export function getGarmentType(input, options = {}) {
     trousers: GARMENT_TYPES.TROUSER,
     pants: GARMENT_TYPES.TROUSER,
     slacks: GARMENT_TYPES.TROUSER,
+    dress_pants: GARMENT_TYPES.TROUSER,
+    dress_pant: GARMENT_TYPES.TROUSER,
+    dress_trousers: GARMENT_TYPES.TROUSER,
+    dress_trouser: GARMENT_TYPES.TROUSER,
+    dress_shirt: GARMENT_TYPES.SHIRT,
+    shirt_dress: GARMENT_TYPES.DRESS,
     jean: GARMENT_TYPES.JEANS,
     denim: GARMENT_TYPES.JEANS,
     bermuda: GARMENT_TYPES.SHORTS,
@@ -216,6 +245,10 @@ export function getGarmentType(input, options = {}) {
     shirts: GARMENT_TYPES.SHIRT,
     oxford: GARMENT_TYPES.SHIRT,
     top: GARMENT_TYPES.SHIRT,
+    hoody: GARMENT_TYPES.HOODIE,
+    hoodies: GARMENT_TYPES.HOODIE,
+    sweatshirts: GARMENT_TYPES.SWEATSHIRT,
+    pullover: GARMENT_TYPES.HOODIE,
     tee: GARMENT_TYPES.T_SHIRT,
     tshirt: GARMENT_TYPES.T_SHIRT,
     t_shirt: GARMENT_TYPES.T_SHIRT,
@@ -235,5 +268,24 @@ export function getGarmentType(input, options = {}) {
   };
 
   if (aliases[key]) return aliases[key];
+
+  // Compound phrase disambiguation
+  if (key.includes('dress_shirt') || key.includes('dressshirt')) return GARMENT_TYPES.SHIRT;
+  if (key.includes('shirt_dress') || key.includes('shirtdress')) return GARMENT_TYPES.DRESS;
+  if (key.includes('dress_pant') || key.includes('dresspant') || key.includes('dress_trouser') || key.includes('dresstrouser')) return GARMENT_TYPES.TROUSER;
+
+  // Substring / composite phrase matching
+  if (key.includes('hoodie') || key.includes('hoody')) return GARMENT_TYPES.HOODIE;
+  if (key.includes('sweatshirt')) return GARMENT_TYPES.SWEATSHIRT;
+  if (key.includes('trouser') || key.includes('pant') || key.includes('slack') || key.includes('chino')) return GARMENT_TYPES.TROUSER;
+  if (key.includes('jean') || key.includes('denim')) return GARMENT_TYPES.JEANS;
+  if (key.includes('short') || key.includes('bermuda')) return GARMENT_TYPES.SHORTS;
+  if (key.includes('skirt')) return GARMENT_TYPES.SKIRT;
+  if (key.includes('shirt') || key.includes('blouse') || key.includes('oxford')) return GARMENT_TYPES.SHIRT;
+  if (key.includes('polo')) return GARMENT_TYPES.POLO;
+  if (key.includes('jacket') || key.includes('blazer') || key.includes('coat') || key.includes('suit')) return GARMENT_TYPES.JACKET;
+  if (key.includes('gown')) return GARMENT_TYPES.GOWN;
+  if (key.includes('dress')) return GARMENT_TYPES.DRESS;
+
   return allowFallback ? GARMENT_TYPES.TROUSER : null;
 }

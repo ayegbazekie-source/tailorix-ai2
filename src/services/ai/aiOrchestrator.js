@@ -38,7 +38,7 @@ class AIOrchestrator {
     this.cache = aiCache;
     this.timeoutMs = config.timeoutMs || 30000;
     this.maxRetries = config.maxRetries || 2;
-    this.devLogging = config.devLogging ?? Boolean(import.meta.env.DEV);
+    this.devLogging = config.devLogging ?? (typeof import.meta !== 'undefined' ? Boolean(import.meta?.env?.DEV) : true);
   }
 
   /**
@@ -175,12 +175,17 @@ class AIOrchestrator {
     if (!result || !result.success) {
       const finalError = {
         success: false,
-        status: 'error',
-        code: result?.code || AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
-        message: result?.message || lastError?.message || 'AI request execution failed.',
+        status: result?.status || 'provider_unavailable',
+        provider: result?.provider || executedProviderName,
+        code: result?.error?.code || result?.code || AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
+        message: result?.error?.message || result?.message || lastError?.message || 'AI request execution failed.',
         retryable: Boolean(result?.retryable),
         taskType: request.taskType,
         requestId,
+        error: result?.error || {
+          code: result?.code || AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
+          message: result?.message || 'AI provider unavailable.',
+        },
       };
 
       this.logTelemetry({
@@ -232,6 +237,9 @@ class AIOrchestrator {
       result.specification = canonicalSpec;
       result.data = canonicalSpec;
       result.risk = risk;
+      result.reconstruction = result.reconstruction || canonicalSpec.reconstruction || rawSpec.reconstruction;
+      result.patternBlueprint = result.patternBlueprint || canonicalSpec.patternBlueprint || rawSpec.patternBlueprint;
+      result.constructionMapping = result.constructionMapping || canonicalSpec.constructionMapping || rawSpec.constructionMapping;
     }
 
     // 7. Store in Cache
@@ -411,6 +419,26 @@ class AIOrchestrator {
   }
 
   /**
+   * Optional AI Pattern Verification.
+   * Gemini inspects the deterministic CAD pieces as an auditor.
+   * Gemini MUST NOT rewrite SVG geometry.
+   * Returns structured diagnostic feedback. Tailorix decides whether the pattern passes.
+   */
+  async verifyPattern(patternPieces = [], garmentSpec = {}, image = null) {
+    const images = image ? [{ id: 'pattern_preview', role: 'preview', data: image }] : [];
+    return this.executeRequest({
+      taskType: AI_TASK_TYPES.SPECIFICATION_EXTRACTION,
+      projectId: 'pattern_verification',
+      images,
+      garmentSpecification: garmentSpec,
+      options: {
+        mode: 'pattern_verification',
+        patternPieces,
+      },
+    });
+  }
+
+  /**
    * Deterministically applies an AI structured command to a GarmentSpecification.
    * Tailorix mutates the specification; the pattern engine then re-generates geometry.
    * 
@@ -429,9 +457,15 @@ class AIOrchestrator {
 
     switch (command.action) {
       case PATTERN_COMMAND_ACTIONS.MODIFY_MEASUREMENT: {
-        const { target, operation, value, unit } = command;
+        let { target, operation, value, unit } = command;
+        if (!target) target = 'thigh_width';
+        const tLower = target.toLowerCase();
+        if (tLower === 'thigh' || tLower.includes('thigh')) target = 'thigh_width';
+        else if (tLower === 'waist' || tLower.includes('waist')) target = 'waist_circ';
+        else if (tLower.includes('chest') || tLower.includes('bust')) target = 'chest_circ';
+
         if (!updated.measurements) updated.measurements = {};
-        const currentVal = updated.measurements[target] ?? 0;
+        const currentVal = updated.measurements[target] ?? updated.measurements[tLower] ?? 0;
         const delta = operation === 'subtract' ? -value : value;
         updated.measurements[target] = Math.max(0, currentVal + delta);
         updated.userCorrections[`measurements.${target}`] = updated.measurements[target];
@@ -453,18 +487,32 @@ class AIOrchestrator {
         break;
       }
 
-      case PATTERN_COMMAND_ACTIONS.REPLACE_COMPONENT: {
-        const { target, replacement } = command;
+      case PATTERN_COMMAND_ACTIONS.REPLACE_COMPONENT:
+      case 'replace_component':
+      case 'REPLACE_COMPONENT':
+      case 'UPDATE_SPECIFICATION_FIELD':
+      case 'update_specification_field': {
+        const target = command.target || '';
+        const replacement = command.replacement || command.value;
         if (target === 'sleeve_construction' || target.includes('sleeve')) {
           if (!updated.sleeve) updated.sleeve = {};
           updated.sleeve.type = replacement;
           updated.sleeve.construction = replacement === 'raglan' ? 'raglan_split' : replacement;
           updated.userCorrections['sleeve.type'] = replacement;
-        } else if (target === 'front_dart' || target.includes('dart')) {
+        } else if (target === 'front_dart' || target.includes('dart') || target.includes('princess')) {
           updated.darts = (updated.darts || []).filter((d) => !d.placement?.includes('front'));
           if (!updated.seams) updated.seams = [];
           updated.seams.push({ type: 'princess', placement: 'front_bodice' });
           updated.userCorrections['front_construction'] = 'princess_seams';
+        } else {
+          updated.userCorrections[target] = replacement;
+          const parts = target.split('.');
+          let curr = updated;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!curr[parts[i]]) curr[parts[i]] = {};
+            curr = curr[parts[i]];
+          }
+          curr[parts[parts.length - 1]] = replacement;
         }
         break;
       }

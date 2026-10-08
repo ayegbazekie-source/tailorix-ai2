@@ -23,8 +23,43 @@ export const SUPPORTED_ROLES = [
   'unknown',
 ];
 
-export const MAX_ANALYSIS_DIMENSION = 1920; // 1920px max dimension provides optimal fidelity for seam detection
-export const TARGET_JPEG_QUALITY = 0.88;
+export const MAX_ANALYSIS_DIMENSION = 1200; // 1200px max dimension provides optimal fidelity for seam detection while preventing 503 payload spikes
+export const TARGET_JPEG_QUALITY = 0.82;
+
+/**
+ * Converts any File, Blob, or blob: URL into a base64 Data URI.
+ */
+export async function convertToDataUri(source) {
+  if (!source) return '';
+  if (typeof source === 'string') {
+    if (source.startsWith('data:image/')) return source;
+    if (source.startsWith('blob:') && typeof fetch !== 'undefined') {
+      try {
+        const resp = await fetch(source);
+        const blob = await resp.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.warn('[Tailorix ImagePrep] Failed to resolve blob URL to base64:', err);
+        return source;
+      }
+    }
+    return source;
+  }
+  if (typeof Blob !== 'undefined' && (source instanceof Blob || (typeof File !== 'undefined' && source instanceof File))) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(source);
+    });
+  }
+  return '';
+}
 
 /**
  * Normalizes a single or multiple image inputs into an array of structured image items.
@@ -41,19 +76,25 @@ export async function prepareImageForAnalysis(input, defaultRole = 'front') {
     const item = rawList[i];
     if (!item) continue;
 
-    let dataUri = '';
+    let rawSource = '';
     let role = defaultRole;
     let explicitId = null;
 
     if (typeof item === 'string') {
-      dataUri = item;
+      rawSource = item;
       role = i === 0 ? defaultRole : 'detail';
     } else if (typeof item === 'object') {
-      dataUri = item.data || item.url || item.base64 || item.src || '';
-      role = item.role && SUPPORTED_ROLES.includes(item.role) ? item.role : defaultRole;
-      explicitId = item.id || null;
+      if (typeof Blob !== 'undefined' && (item instanceof Blob || (typeof File !== 'undefined' && item instanceof File))) {
+        rawSource = item;
+        role = defaultRole;
+      } else {
+        rawSource = item.data || item.url || item.base64 || item.src || item.file || '';
+        role = item.role && SUPPORTED_ROLES.includes(item.role) ? item.role : defaultRole;
+        explicitId = item.id || null;
+      }
     }
 
+    const dataUri = await convertToDataUri(rawSource);
     if (!dataUri || typeof dataUri !== 'string') continue;
 
     // Increment counter for role

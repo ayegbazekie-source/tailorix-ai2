@@ -162,8 +162,9 @@ export function resolvePatternEngine(specification = {}) {
     default:
       // Absolutely forbidden to silently fallback to trousers
       return {
-        status: 'unsupported',
-        reason: `Garment type "${gType}" has no registered pattern block engine.`,
+        status: 'PATTERN_ENGINE_NOT_IMPLEMENTED',
+        reason: `Pattern engine for ${gType || 'this category'} is under development. Verified specification saved.`,
+        message: `Pattern engine for ${gType || 'this category'} is under development. Verified specification saved.`,
         candidates: ['shirt', 'trouser', 'jeans', 'jacket', 'dress', 'skirt', 'polo', 't_shirt'],
         requiredFields: ['identity.garmentType'],
       };

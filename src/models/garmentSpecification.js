@@ -6,7 +6,7 @@
  * confidence/uncertainty tracking, and structural vs sculptural separation.
  */
 
-import { getGarmentType, GARMENT_TYPES } from './garmentTaxonomy';
+import { getGarmentType, GARMENT_TYPES } from './garmentTaxonomy.js';
 
 export const SPEC_VERSION = '1.0.0';
 
@@ -30,12 +30,12 @@ export const SPEC_STATUS = {
 /**
  * Creates a normalized value with explicit confidence and state tracking.
  */
-export function createConfidenceValue(value = null, confidence = 1.0, state = CONFIDENCE_STATES.CONFIRMED, source = 'manual') {
+export function createConfidenceValue(value = null, confidence = 1.0, state = CONFIDENCE_STATES.CONFIRMED, source = 'tailorix') {
   return {
     value,
     confidence: typeof confidence === 'number' ? confidence : 0.0,
     state,
-    source,
+    source, // 'gemini' | 'tailorix' | 'human' | 'mock'
   };
 }
 
@@ -225,7 +225,16 @@ export function createGarmentSpecification(initial = {}) {
 
   const defaultSilhouette = gType ? gType.defaultSilhouette : 'classic';
 
-  const isBottom = garmentFamily === 'bottoms';
+  const isBottom = garmentFamily === 'bottoms' ||
+    (typeof rawType === 'string' && (
+      rawType.toLowerCase().includes('trouser') ||
+      rawType.toLowerCase().includes('pant') ||
+      rawType.toLowerCase().includes('jean') ||
+      rawType.toLowerCase().includes('short') ||
+      rawType.toLowerCase().includes('slack') ||
+      rawType.toLowerCase().includes('chino') ||
+      rawType.toLowerCase().includes('bottom')
+    ));
 
   return {
     version: SPEC_VERSION,
@@ -235,7 +244,7 @@ export function createGarmentSpecification(initial = {}) {
     identity: {
       garmentType: garmentTypeId,
       garmentSubtype: initial.identity?.garmentSubtype || initial.garmentSubtype || null,
-      category: garmentFamily,
+      category: isBottom ? 'bottoms' : garmentFamily,
       genderTarget: initial.identity?.genderTarget || initial.genderTarget || 'unisex',
       constructionType: initial.identity?.constructionType || initial.constructionType || 'tailored_woven',
     },
@@ -261,34 +270,56 @@ export function createGarmentSpecification(initial = {}) {
       },
     },
 
-    // 4. Neckline
-    neckline: initial.neckline !== undefined
-      ? (initial.neckline && typeof initial.neckline === 'object'
+    // 4. Neckline (STRICT: NOT_APPLICABLE for bottom garments; preserves explicit contradictions for testing)
+    neckline: (isBottom || garmentFamily === 'skirts')
+      ? (initial.neckline && typeof initial.neckline === 'object' && initial.neckline.type && !['none', 'NOT_APPLICABLE', 'standard'].includes(initial.neckline.type)
           ? createNecklineComponent(initial.neckline)
-          : (initial.neckline ? createNecklineComponent({ type: initial.neckline }) : null))
-      : (isBottom ? null : createNecklineComponent({ type: 'crew' })),
+          : 'NOT_APPLICABLE')
+      : (initial.neckline !== undefined
+          ? (initial.neckline && typeof initial.neckline === 'object'
+              ? createNecklineComponent(initial.neckline)
+              : (initial.neckline && initial.neckline !== 'NOT_APPLICABLE' && initial.neckline !== 'none'
+                  ? createNecklineComponent({ type: initial.neckline })
+                  : null))
+          : createNecklineComponent({ type: 'crew' })),
 
-    // 5. Collar
-    collar: initial.collar !== undefined
-      ? (initial.collar && typeof initial.collar === 'object'
+    // 5. Collar (STRICT: NOT_APPLICABLE for bottom garments; preserves explicit contradictions for testing)
+    collar: (isBottom || garmentFamily === 'skirts')
+      ? (initial.collar && typeof initial.collar === 'object' && initial.collar.type && !['none', 'NOT_APPLICABLE', 'standard'].includes(initial.collar.type)
           ? createCollarComponent(initial.collar)
-          : (initial.collar ? createCollarComponent({ type: initial.collar }) : null))
-      : (isBottom ? null : createCollarComponent({ type: garmentTypeId === 'shirt' ? 'spread' : 'none' })),
+          : 'NOT_APPLICABLE')
+      : (initial.collar !== undefined
+          ? (initial.collar && typeof initial.collar === 'object'
+              ? createCollarComponent(initial.collar)
+              : (initial.collar && initial.collar !== 'NOT_APPLICABLE' && initial.collar !== 'none'
+                  ? createCollarComponent({ type: initial.collar })
+                  : null))
+          : createCollarComponent({ type: garmentTypeId === 'shirt' ? 'spread' : 'none' })),
 
-    // 6. Sleeve
-    sleeve: initial.sleeve !== undefined
-      ? (initial.sleeve && typeof initial.sleeve === 'object'
+    // 6. Sleeve & Sleeves (STRICT: NOT_APPLICABLE for bottom garments; preserves explicit contradictions for testing)
+    sleeve: (isBottom || garmentFamily === 'skirts')
+      ? (initial.sleeve && typeof initial.sleeve === 'object' && initial.sleeve.type && !['none', 'sleeveless', 'NOT_APPLICABLE', 'set-in', 'set_in', 'standard'].includes(initial.sleeve.type)
           ? createSleeveComponent(initial.sleeve)
-          : (initial.sleeve ? createSleeveComponent({ type: initial.sleeve }) : null))
-      : (isBottom ? null : createSleeveComponent({
-          type: garmentFamily === 'tops' || garmentFamily === 'outerwear' ? 'set-in' : 'sleeveless',
-          length: 'full',
-        })),
+          : 'NOT_APPLICABLE')
+      : (initial.sleeve !== undefined
+          ? (initial.sleeve && typeof initial.sleeve === 'object'
+              ? createSleeveComponent(initial.sleeve)
+              : (initial.sleeve && initial.sleeve !== 'NOT_APPLICABLE' && initial.sleeve !== 'none' && initial.sleeve !== 'sleeveless'
+                  ? createSleeveComponent({ type: initial.sleeve })
+                  : null))
+          : createSleeveComponent({
+              type: garmentFamily === 'tops' || garmentFamily === 'outerwear' ? 'set-in' : 'sleeveless',
+              length: 'full',
+            })),
+    sleeves: (isBottom || garmentFamily === 'skirts') ? 'NOT_APPLICABLE' : (initial.sleeves || (initial.sleeve?.type || (garmentFamily === 'tops' || garmentFamily === 'outerwear' ? 'set-in' : 'sleeveless'))),
+
+    // 6b. Armholes (STRICT: NOT_APPLICABLE for bottom garments)
+    armholes: (isBottom || garmentFamily === 'skirts') ? 'NOT_APPLICABLE' : (initial.armholes || 'standard'),
 
     // 7. Body Construction
     body: {
-      frontConstruction: initial.body?.frontConstruction || 'two_piece_darted',
-      backConstruction: initial.body?.backConstruction || 'two_piece_yoke',
+      frontConstruction: initial.body?.frontConstruction || (isBottom ? 'two_panel_leg' : 'two_piece_darted'),
+      backConstruction: initial.body?.backConstruction || (isBottom ? 'two_panel_leg' : 'two_piece_yoke'),
       sideConstruction: initial.body?.sideConstruction || 'side_seamed',
     },
 
@@ -305,19 +336,19 @@ export function createGarmentSpecification(initial = {}) {
     gathers: Array.isArray(initial.gathers) ? initial.gathers : [],
     pockets: Array.isArray(initial.pockets)
       ? initial.pockets.map((p) => typeof p === 'string' ? createPocketComponent({ type: p }) : createPocketComponent(p))
-      : (garmentTypeId === 'trouser' ? [createPocketComponent({ type: 'slant', placement: 'front' })] : []),
+      : (initial.pocket ? [createPocketComponent({ type: initial.pocket })] : []),
     closures: Array.isArray(initial.closures)
       ? initial.closures.map((c) => typeof c === 'string' ? createClosureComponent({ type: c }) : createClosureComponent(c))
-      : [createClosureComponent({ type: garmentFamily === 'bottoms' ? 'zipper' : 'buttons' })],
+      : (initial.closure ? [createClosureComponent({ type: initial.closure })] : (isBottom ? [createClosureComponent({ type: 'zipper', placement: 'fly' })] : [])),
     waistband: initial.waistband
       ? (typeof initial.waistband === 'object' ? createWaistbandComponent(initial.waistband) : createWaistbandComponent({ type: initial.waistband }))
-      : (garmentFamily === 'bottoms' ? createWaistbandComponent({ type: 'straight' }) : null),
+      : (isBottom ? createWaistbandComponent({ type: 'straight' }) : null),
     cuffs: Array.isArray(initial.cuffs)
       ? initial.cuffs
       : (garmentTypeId === 'shirt' ? [createCuffComponent({ type: 'barrel' })] : []),
     hems: Array.isArray(initial.hems)
       ? initial.hems
-      : [createHemComponent({ type: garmentFamily === 'bottoms' ? 'blind' : 'topstitched' })],
+      : [createHemComponent({ type: isBottom ? 'blind' : 'topstitched' })],
 
     // 9. Material / Fabric Properties
     material: {
@@ -330,14 +361,15 @@ export function createGarmentSpecification(initial = {}) {
       rigidity: initial.material?.rigidity ?? 0.3,
     },
 
-    // 10. Construction & Manufacturing Details
+    // 10. Construction & Manufacturing Details (Do NOT invent details unless supported by evidence/rules)
     constructionDetails: {
-      topstitching: initial.constructionDetails?.topstitching || 'single_needle_edge',
-      seamTypes: initial.constructionDetails?.seamTypes || ['plain_serged'],
-      reinforcement: initial.constructionDetails?.reinforcement || ['pocket_bartacks'],
-      interfacing: initial.constructionDetails?.interfacing || 'medium_fusible_weft',
-      lining: initial.constructionDetails?.lining || (garmentFamily === 'outerwear' ? 'full_lining' : 'unlined'),
-      hardware: initial.constructionDetails?.hardware || [],
+      topstitching: initial.constructionDetails?.topstitching || initial.topstitching || 'single_needle_edge',
+      seamTypes: initial.constructionDetails?.seamTypes || initial.seamTypes || ['plain_serged'],
+      reinforcement: initial.constructionDetails?.reinforcement || initial.reinforcement || [],
+      interfacing: initial.constructionDetails?.interfacing || initial.interfacing || (isBottom ? 'waistband_buckram' : null),
+      lining: initial.constructionDetails?.lining || initial.lining || (garmentFamily === 'outerwear' ? 'full_lining' : 'unlined'),
+      boning: (isBottom || garmentFamily === 'skirts') ? 'NOT_APPLICABLE' : (initial.constructionDetails?.boning || initial.boning || 'none'),
+      hardware: initial.constructionDetails?.hardware || initial.hardware || [],
     },
 
     // 11. Measurements & Anchors

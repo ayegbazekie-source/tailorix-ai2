@@ -19,6 +19,7 @@ import {
   createClosureComponent,
 } from '../../models/garmentSpecification';
 import { getGarmentType } from '../../models/garmentTaxonomy';
+import { deconstructDebugStore } from '../ai/deconstructDebugStore';
 
 export function normalizeSpecification(rawInput = {}) {
   if (!rawInput || typeof rawInput !== 'object') {
@@ -58,80 +59,88 @@ export function normalizeSpecification(rawInput = {}) {
     });
   }
 
-  // 3. Normalize sleeve
+  // 3. Normalize sleeve (STRICT: null for bottoms/skirts)
   let sleeveObj = null;
-  const rawSleeve = rawInput.sleeve || rawInput.sleeves;
-  if (typeof rawSleeve === 'string') {
-    const sLower = rawSleeve.toLowerCase();
-    let sType = 'set-in';
-    let sLength = 'full';
-    let sConstruction = 'one-piece';
+  if (resolvedFamily !== 'bottoms' && resolvedFamily !== 'skirts') {
+    const rawSleeve = rawInput.sleeve || rawInput.sleeves;
+    if (typeof rawSleeve === 'string') {
+      const sLower = rawSleeve.toLowerCase();
+      let sType = 'set-in';
+      let sLength = 'full';
+      let sConstruction = 'one-piece';
 
-    if (sLower.includes('raglan')) {
-      sType = 'raglan';
-      sConstruction = 'raglan_split';
-    } else if (sLower.includes('kimono')) {
-      sType = 'kimono';
-    } else if (sLower.includes('two-piece') || sLower.includes('two_piece') || sLower.includes('tailored')) {
-      sType = 'two-piece';
-      sConstruction = 'two-piece';
-    } else if (sLower.includes('sleeveless') || sLower.includes('none')) {
-      sType = 'sleeveless';
-      sLength = 'sleeveless';
+      if (sLower.includes('raglan')) {
+        sType = 'raglan';
+        sConstruction = 'raglan_split';
+      } else if (sLower.includes('kimono')) {
+        sType = 'kimono';
+      } else if (sLower.includes('two-piece') || sLower.includes('two_piece') || sLower.includes('tailored')) {
+        sType = 'two-piece';
+        sConstruction = 'two-piece';
+      } else if (sLower.includes('sleeveless') || sLower.includes('none')) {
+        sType = 'sleeveless';
+        sLength = 'sleeveless';
+      }
+
+      if (sLower.includes('short')) sLength = 'short';
+      else if (sLower.includes('three-quarter') || sLower.includes('3/4')) sLength = 'three-quarter';
+
+      sleeveObj = createSleeveComponent({
+        type: sType,
+        length: sLength,
+        construction: sConstruction,
+        confidence: createConfidenceValue(sType, rawInput.confidence || 0.88, CONFIDENCE_STATES.INFERRED, rawInput.source || 'gemini'),
+      });
+    } else if (rawSleeve && typeof rawSleeve === 'object') {
+      sleeveObj = createSleeveComponent(rawSleeve);
     }
-
-    if (sLower.includes('short')) sLength = 'short';
-    else if (sLower.includes('three-quarter') || sLower.includes('3/4')) sLength = 'three-quarter';
-
-    sleeveObj = createSleeveComponent({
-      type: sType,
-      length: sLength,
-      construction: sConstruction,
-      confidence: createConfidenceValue(sType, rawInput.confidence || 0.88, CONFIDENCE_STATES.INFERRED, 'vision'),
-    });
-  } else if (rawSleeve && typeof rawSleeve === 'object') {
-    sleeveObj = createSleeveComponent(rawSleeve);
   }
 
-  // 4. Normalize collar
+  // 4. Normalize collar (STRICT: null for bottoms/skirts)
   let collarObj = null;
-  const rawCollar = rawInput.collar;
-  if (typeof rawCollar === 'string') {
-    const cLower = rawCollar.toLowerCase();
-    let cType = 'none';
-    if (cLower.includes('notch') || cLower.includes('lapel')) cType = 'notch_lapel';
-    else if (cLower.includes('peak')) cType = 'peak_lapel';
-    else if (cLower.includes('spread') || cLower.includes('shirt')) cType = 'spread';
-    else if (cLower.includes('mandarin') || cLower.includes('band')) cType = 'band';
-    else if (cLower.includes('rib') || cLower.includes('polo')) cType = 'flat_knit';
+  if (resolvedFamily !== 'bottoms' && resolvedFamily !== 'skirts') {
+    const rawCollar = rawInput.collar;
+    if (typeof rawCollar === 'string') {
+      const cLower = rawCollar.toLowerCase();
+      let cType = 'none';
+      if (cLower.includes('notch') || cLower.includes('lapel')) cType = 'notch_lapel';
+      else if (cLower.includes('peak')) cType = 'peak_lapel';
+      else if (cLower.includes('spread') || cLower.includes('shirt')) cType = 'spread';
+      else if (cLower.includes('mandarin') || cLower.includes('band')) cType = 'band';
+      else if (cLower.includes('rib') || cLower.includes('polo')) cType = 'flat_knit';
 
-    collarObj = createCollarComponent({
-      type: cType,
-      confidence: createConfidenceValue(cType, 0.88, CONFIDENCE_STATES.INFERRED),
-    });
-  } else if (rawCollar && typeof rawCollar === 'object') {
-    collarObj = createCollarComponent(rawCollar);
+      collarObj = createCollarComponent({
+        type: cType,
+        confidence: createConfidenceValue(cType, 0.88, CONFIDENCE_STATES.INFERRED, rawInput.source || 'gemini'),
+      });
+    } else if (rawCollar && typeof rawCollar === 'object') {
+      collarObj = createCollarComponent(rawCollar);
+    }
   }
 
-  // 5. Normalize neckline
+  // 5. Normalize neckline (STRICT: null for bottoms/skirts)
   let necklineObj = null;
-  const rawNeck = rawInput.neckline;
-  if (typeof rawNeck === 'string') {
-    const nLower = rawNeck.toLowerCase();
-    let nType = 'crew';
-    if (nLower.includes('v-neck') || nLower.includes('v neck')) nType = 'v-neck';
-    else if (nLower.includes('boat') || nLower.includes('bateau')) nType = 'boat';
-    else if (nLower.includes('sweetheart')) nType = 'sweetheart';
-    else if (nLower.includes('scoop')) nType = 'scoop';
-    else if (nLower.includes('square')) nType = 'square';
-    else if (nLower.includes('none') || resolvedFamily === 'bottoms') nType = null;
+  if (resolvedFamily !== 'bottoms' && resolvedFamily !== 'skirts') {
+    const rawNeck = rawInput.neckline;
+    if (typeof rawNeck === 'string') {
+      const nLower = rawNeck.toLowerCase();
+      let nType = 'crew';
+      if (nLower.includes('v-neck') || nLower.includes('v neck')) nType = 'v-neck';
+      else if (nLower.includes('boat') || nLower.includes('bateau')) nType = 'boat';
+      else if (nLower.includes('sweetheart')) nType = 'sweetheart';
+      else if (nLower.includes('scoop')) nType = 'scoop';
+      else if (nLower.includes('square')) nType = 'square';
+      else if (nLower.includes('none')) nType = null;
 
-    necklineObj = createNecklineComponent({
-      type: nType,
-      confidence: createConfidenceValue(nType, 0.88, CONFIDENCE_STATES.INFERRED),
-    });
-  } else if (rawNeck && typeof rawNeck === 'object') {
-    necklineObj = createNecklineComponent(rawNeck);
+      if (nType) {
+        necklineObj = createNecklineComponent({
+          type: nType,
+          confidence: createConfidenceValue(nType, 0.88, CONFIDENCE_STATES.INFERRED, rawInput.source || 'gemini'),
+        });
+      }
+    } else if (rawNeck && typeof rawNeck === 'object') {
+      necklineObj = createNecklineComponent(rawNeck);
+    }
   }
 
   // 6. Normalize pockets
@@ -142,13 +151,23 @@ export function normalizeSpecification(rawInput = {}) {
       if (typeof p === 'string') {
         const pLower = p.toLowerCase();
         let pType = 'patch';
-        let placement = 'front';
-        if (pLower.includes('slant')) { pType = 'slant'; placement = 'front_waist'; }
-        else if (pLower.includes('welt') || pLower.includes('jetted')) { pType = 'welt'; placement = 'back_hip'; }
-        else if (pLower.includes('coin')) { pType = 'coin'; placement = 'front_pocket'; }
+        let placement = resolvedFamily === 'bottoms' ? 'waist_front' : 'chest_left';
+        if (pLower.includes('slant')) { pType = 'slant'; placement = 'waist_front'; }
+        else if (pLower.includes('welt') || pLower.includes('jetted')) { pType = 'welt'; placement = resolvedFamily === 'bottoms' ? 'back_hip' : 'waist_front'; }
+        else if (pLower.includes('coin')) { pType = 'coin'; placement = 'waist_front'; }
+        else if (pLower.includes('back')) { pType = 'patch'; placement = 'back_hip'; }
         pockets.push(createPocketComponent({ type: pType, placement }));
       } else if (p && typeof p === 'object') {
-        pockets.push(createPocketComponent(p));
+        let placement = p.placement;
+        if (!placement) {
+          const typeLower = (p.type || '').toLowerCase();
+          if (resolvedFamily === 'bottoms') {
+            placement = (typeLower.includes('back') || typeLower.includes('rear')) ? 'back_hip' : 'waist_front';
+          } else {
+            placement = typeLower.includes('back') ? 'back_hip' : 'chest_left';
+          }
+        }
+        pockets.push(createPocketComponent({ ...p, placement }));
       }
     });
   }
@@ -209,6 +228,30 @@ export function normalizeSpecification(rawInput = {}) {
     status: isUnknown ? SPEC_STATUS.NEEDS_REVIEW : (rawInput.status || SPEC_STATUS.DRAFT),
     userCorrections: rawInput.userCorrections || {},
   });
+
+  // Preserve Gemini visual reconstruction and pattern blueprint directly on canonical object
+  if (rawInput.reconstruction) {
+    canonical.reconstruction = rawInput.reconstruction;
+  }
+  if (rawInput.patternBlueprint) {
+    canonical.patternBlueprint = rawInput.patternBlueprint;
+  }
+  if (rawInput.constructionMapping) {
+    canonical.constructionMapping = rawInput.constructionMapping;
+  }
+
+  // Forensic Diagnostic Log: NORMALIZATION
+  console.info('=== [NORMALIZATION] ===', {
+    rawGarmentType: rawType,
+    normalizedGarmentType: resolvedGarmentType,
+    family: resolvedFamily,
+    silhouette: canonical.silhouette?.primary,
+    confidence: canonical.confidence?.overall,
+    uncertaintiesCount: canonical.uncertainties?.length || 0,
+    sculpturalCount: canonical.sculpturalComponents?.length || 0,
+  });
+
+  deconstructDebugStore.recordNormalization(canonical);
 
   return canonical;
 }

@@ -5,12 +5,13 @@
 
 import { jsPDF } from 'jspdf';
 import { calculatePieceBounds } from '../../models/patternGeometry';
+import { CAD_STYLE_CONFIG } from '../cadStyleConfig.js';
 
 /**
- * Exports structured pattern pieces to a clean, layered SVG document.
+ * Generates structured pattern pieces as a clean, layered SVG string.
  */
-export function exportPatternToSVG(pieces = [], garmentType = 'garment') {
-  if (!pieces || pieces.length === 0) return;
+export function generatePatternSVG(pieces = [], garmentType = 'garment') {
+  if (!pieces || pieces.length === 0) return '';
 
   // Calculate overall bounding box
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -30,14 +31,14 @@ export function exportPatternToSVG(pieces = [], garmentType = 'garment') {
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX - pad} ${minY - pad} ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}">
   <defs>
     <style>
-      .cut-line { fill: none; stroke: #0f172a; stroke-width: 2px; stroke-linejoin: round; }
-      .seam-line { fill: none; stroke: #64748b; stroke-width: 1px; stroke-dasharray: 4,4; }
-      .grainline { stroke: #d97706; stroke-width: 1.5px; marker-start: url(#arrow); marker-end: url(#arrow); }
-      .notch { stroke: #ef4444; stroke-width: 2px; }
-      .annotation { font-family: sans-serif; font-size: 11px; fill: #1e293b; font-weight: bold; }
+      .cut-line { fill: none; stroke: ${CAD_STYLE_CONFIG.outerSilhouette.stroke}; stroke-width: ${CAD_STYLE_CONFIG.outerSilhouette.strokeWidth}px; stroke-linejoin: round; stroke-linecap: round; }
+      .seam-line { fill: none; stroke: ${CAD_STYLE_CONFIG.seamAllowanceGuide.stroke}; stroke-width: ${CAD_STYLE_CONFIG.seamAllowanceGuide.strokeWidth}px; stroke-dasharray: 4,2.5; stroke-linecap: round; }
+      .grainline { stroke: ${CAD_STYLE_CONFIG.grainline.stroke}; stroke-width: ${CAD_STYLE_CONFIG.grainline.strokeWidth}px; stroke-linecap: round; }
+      .notch { stroke: ${CAD_STYLE_CONFIG.balanceNotch.singleStroke}; stroke-width: ${CAD_STYLE_CONFIG.balanceNotch.strokeWidth}px; stroke-linecap: round; }
+      .annotation { font-family: monospace; font-size: 10px; fill: #1e293b; font-weight: bold; letter-spacing: 0.5px; }
     </style>
     <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#d97706" />
+      <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="${CAD_STYLE_CONFIG.grainline.stroke}" />
     </marker>
   </defs>
 
@@ -80,16 +81,29 @@ export function exportPatternToSVG(pieces = [], garmentType = 'garment') {
   svgContent += `  </g>\n`;
 
   svgContent += `</svg>`;
+  return svgContent;
+}
 
-  const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `tailorix_${garmentType}_pattern_${Date.now()}.svg`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+/**
+ * Exports structured pattern pieces to a clean, layered SVG document.
+ */
+export function exportPatternToSVG(pieces = [], garmentType = 'garment') {
+  const svgContent = generatePatternSVG(pieces, garmentType);
+  if (!svgContent) return '';
+
+  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tailorix_${garmentType}_pattern_${Date.now()}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  return svgContent;
 }
 
 /**

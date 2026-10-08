@@ -16,8 +16,10 @@ import { applySeamAllowanceToPiece } from './geometricSeamOffset';
 import { calculatePieceBounds } from '../../models/patternGeometry';
 import { resolvePatternEngine } from '../../services/deconstruct/constructionResolver';
 import { validatePatternPieces } from './patternValidator';
+import { validateAntiGenericPattern } from './antiGenericValidator';
 import { checkPatternGenerationGate } from '../../services/ai/aiRiskEvaluator';
 import { logger } from '../deconstructLogger';
+import { deconstructDebugStore } from '../../services/ai/deconstructDebugStore';
 
 export function generatePattern(garmentSpec = {}, measurements = {}, parameters = {}, units = 'in') {
   // Pattern Generation Gate Check
@@ -66,13 +68,16 @@ export function generatePattern(garmentSpec = {}, measurements = {}, parameters 
     };
   }
 
-  if (resolution.status === 'unsupported') {
-    logger.router('Garment type is unsupported:', resolution.reason);
+  if (resolution.status === 'unsupported' || resolution.status === 'PATTERN_ENGINE_NOT_IMPLEMENTED') {
+    const categoryName = garmentSpec.identity?.garmentType || garmentSpec.garmentType || 'this category';
+    logger.router('Garment pattern engine not implemented:', resolution.reason);
     return {
-      status: 'unsupported',
-      garmentType: garmentSpec.garmentType || 'unsupported',
-      reason: resolution.reason,
-      candidates: resolution.candidates,
+      status: 'PATTERN_ENGINE_NOT_IMPLEMENTED',
+      garmentType: categoryName,
+      reason: resolution.reason || `Pattern engine for [${categoryName}] is under development. Verified specification saved.`,
+      message: `Pattern engine for [${categoryName}] is under development. Verified specification saved.`,
+      preservedSpecification: garmentSpec,
+      candidates: resolution.candidates || ['shirt', 'trouser', 'jeans', 'jacket', 'dress', 'skirt'],
       pieces: [],
       timestamp: Date.now(),
     };
@@ -81,10 +86,33 @@ export function generatePattern(garmentSpec = {}, measurements = {}, parameters 
   logger.reasoning(`Construction resolved: ${resolution.engine} + ${resolution.construction}`);
   logger.router(`Pattern engine dispatched: ${resolution.engine}`);
 
+  // Forensic Diagnostic Log: PATTERN ROUTING
+  console.info('=== [PATTERN ROUTING] ===', {
+    resolvedGarmentType: garmentSpec.identity?.garmentType || garmentSpec.garmentType,
+    subtype: garmentSpec.identity?.subtype || garmentSpec.subtype,
+    silhouette: garmentSpec.silhouette?.primary || garmentSpec.silhouette,
+    keyConstructionFeatures: {
+      sleeve: garmentSpec.sleeve?.type || garmentSpec.sleeves,
+      neckline: garmentSpec.neckline?.type || garmentSpec.neckline,
+      collar: garmentSpec.collar?.type || garmentSpec.collar,
+      closure: garmentSpec.closures?.[0]?.type || garmentSpec.closure,
+      waistband: garmentSpec.waistband?.type || garmentSpec.waistband,
+    },
+    selectedEngine: resolution.engine,
+    construction: resolution.construction,
+  });
+
   const mergedParams = {
     ...resolution.parameters,
     ...parameters,
   };
+
+  deconstructDebugStore.recordRouting({
+    resolvedGarmentType: garmentSpec.identity?.garmentType || garmentSpec.garmentType,
+    selectedEngine: resolution.engine,
+    construction: resolution.construction,
+    parameters: mergedParams,
+  });
 
   let result;
   switch (resolution.engine) {
@@ -136,16 +164,29 @@ export function generatePattern(garmentSpec = {}, measurements = {}, parameters 
   });
 
   // Level 2 Geometric Pattern Validation
-  const patternValidation = validatePatternPieces(processedPieces);
+  const patternValidation = validatePatternPieces(processedPieces, {
+    specification: garmentSpec,
+    measurements,
+    engine: resolution.engine,
+  });
   logger.validator(`Pattern geometry validation status: ${patternValidation.summary.status}`);
 
+  deconstructDebugStore.recordPatternPieces(processedPieces, patternValidation);
+
+  // Level 3 Anti-Generic Pattern & Taxonomy Leak Validation (Section 20A & 20B)
+  const antiGenericValidation = validateAntiGenericPattern(processedPieces, garmentSpec, parameters.reconstructionModel);
+  if (!antiGenericValidation.valid) {
+    logger.validator(`Anti-generic validation warning: ${antiGenericValidation.status}`);
+  }
+
   return {
-    status: 'success',
+    status: antiGenericValidation.valid ? 'success' : 'validation_warning',
     engine: resolution.engine,
     garmentType: result.garmentType || garmentSpec.garmentType,
     garmentFamily: resolution.reasoning?.blockFamily || 'apparel',
     resolution,
     validation: patternValidation,
+    antiGenericValidation,
     pieces: processedPieces,
     timestamp: Date.now(),
   };

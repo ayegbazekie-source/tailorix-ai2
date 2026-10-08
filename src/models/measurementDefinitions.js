@@ -17,6 +17,38 @@ export const CONVERSION_FACTORS = {
   mm_to_in: 1 / 25.4,
 };
 
+// Internal CAD canvas coordinate scaling factor: 12 px / coordinate units per 1 canonical inch
+export const CAD_CANVAS_SCALE = 12;
+
+/**
+ * Converts internal CAD canvas units (pixels) to canonical inches.
+ */
+export function cadUnitsToInches(cadUnits) {
+  if (typeof cadUnits !== 'number' || isNaN(cadUnits)) return 0;
+  return Number((cadUnits / CAD_CANVAS_SCALE).toFixed(2));
+}
+
+/**
+ * Converts canonical inches to internal CAD canvas units (pixels).
+ */
+export function inchesToCadUnits(inches) {
+  if (typeof inches !== 'number' || isNaN(inches)) return 0;
+  return Number((inches * CAD_CANVAS_SCALE).toFixed(2));
+}
+
+/**
+ * Formats piece bounding dimensions safely in the target unit.
+ * Prevents raw canvas units (e.g. 153.00) from being mislabeled with inches (").
+ */
+export function formatPieceDimensions(bounds, targetUnit = 'in') {
+  if (!bounds) return `0.00 ${targetUnit} × 0.00 ${targetUnit}`;
+  const widthInches = cadUnitsToInches(bounds.width);
+  const heightInches = cadUnitsToInches(bounds.height);
+  const w = fromCanonical(widthInches, targetUnit);
+  const h = fromCanonical(heightInches, targetUnit);
+  return `${w.toFixed(2)}${targetUnit === 'in' ? '"' : ' ' + targetUnit} × ${h.toFixed(2)}${targetUnit === 'in' ? '"' : ' ' + targetUnit}`;
+}
+
 /**
  * Converts value from canonical inches to target unit.
  */

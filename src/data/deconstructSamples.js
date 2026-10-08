@@ -82,8 +82,10 @@ export const DECONSTRUCT_BENCHMARK_SAMPLES = [
     confidence: 0.96,
     specs: {
       silhouette: 'High-Rise Relaxed Taper with Deep Front Creases',
-      neckline: 'Split-Back Contoured Waistband with Center Back V-Notch',
-      sleeves: 'N/A',
+      waistband: 'Split-Back Contoured Waistband with Center Back V-Notch',
+      neckline: 'NOT_APPLICABLE',
+      collar: 'NOT_APPLICABLE',
+      sleeves: 'NOT_APPLICABLE',
       closure: 'Extended Waistband Tab with French Fly, Hook & Bar, and Brass Zipper',
       interfacing: 'Non-Stretch Waistband Buckram & Pocket Stay Canvas',
       boning: 'None',

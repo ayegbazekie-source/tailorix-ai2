@@ -1,4 +1,4 @@
-import { generatePatternCAD } from '../patternEngine';
+import { generatePatternCAD } from '../patternEngine/index.js';
 import { generateSeamAllowancePath } from '../patternEngine/seamOffset';
 import { calculateFabricMarker } from '../markerEngine';
 

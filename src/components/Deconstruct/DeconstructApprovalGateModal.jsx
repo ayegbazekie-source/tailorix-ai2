@@ -69,6 +69,12 @@ export default function DeconstructApprovalGateModal({
     return 0.9;
   }, [workingSpec]);
 
+  const isBottom = useMemo(() => {
+    const family = (workingSpec.identity?.category || workingSpec.garmentFamily || '').toLowerCase();
+    const type = (workingSpec.identity?.garmentType || workingSpec.garmentType || '').toLowerCase();
+    return family === 'bottoms' || family === 'skirts' || ['trouser', 'trousers', 'pants', 'jeans', 'shorts', 'slacks', 'chinos', 'skirt'].includes(type);
+  }, [workingSpec]);
+
   // Check if approval can proceed
   const canApprove = validation.valid && resolution.status === 'resolved';
 
@@ -368,19 +374,34 @@ export default function DeconstructApprovalGateModal({
                   </div>
                 </div>
 
-                {/* Upper Construction: Sleeve & Collar */}
-                <div className="p-3.5 bg-[#161719] rounded-xl border border-[#242529] space-y-2">
-                  <div className="font-semibold text-[#F5F5F7] flex items-center justify-between">
-                    <span>Sleeve & Neckline Finish</span>
-                    <span className="text-[10px] text-[#A0A1A8] font-mono">{workingSpec.sleeve?.type || 'Standard'}</span>
+                {/* Construction: Lower-Body for Bottoms vs Upper-Body for Tops/Dresses */}
+                {isBottom ? (
+                  <div className="p-3.5 bg-[#161719] rounded-xl border border-[#242529] space-y-2">
+                    <div className="font-semibold text-[#F5F5F7] flex items-center justify-between">
+                      <span>Waist & Leg Construction</span>
+                      <span className="text-[10px] text-[#C5A059] font-mono uppercase">{workingSpec.waistband?.type || 'Contoured'}</span>
+                    </div>
+                    <div className="text-[11px] text-[#8A8B93] space-y-1">
+                      <div>Waistband: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.waistband?.type || 'Contoured Split-Back'}</span></div>
+                      <div>Front Rise & Fly: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.closures?.[0]?.type || 'Concealed Fly Zipper'}</span></div>
+                      <div>Leg Architecture: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.body?.frontConstruction || 'Two-Panel Creased Leg'}</span></div>
+                      <div>Upper Anatomy: <span className="text-zinc-500 font-mono text-[10px]">NOT_APPLICABLE (No Neckline/Collar/Sleeves)</span></div>
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#8A8B93] space-y-1">
-                    <div>Sleeve: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.sleeve?.type || 'None'} ({workingSpec.sleeve?.construction || 'one-piece'})</span></div>
-                    <div>Collar: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.collar?.type || 'None'}</span></div>
-                    <div>Neckline: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.neckline?.type || 'None'}</span></div>
-                    <div>Cuffs: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.cuffs?.[0]?.type || 'Standard'}</span></div>
+                ) : (
+                  <div className="p-3.5 bg-[#161719] rounded-xl border border-[#242529] space-y-2">
+                    <div className="font-semibold text-[#F5F5F7] flex items-center justify-between">
+                      <span>Sleeve & Neckline Finish</span>
+                      <span className="text-[10px] text-[#A0A1A8] font-mono">{workingSpec.sleeve?.type || 'Standard'}</span>
+                    </div>
+                    <div className="text-[11px] text-[#8A8B93] space-y-1">
+                      <div>Sleeve: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.sleeve?.type || 'None'} ({workingSpec.sleeve?.construction || 'one-piece'})</span></div>
+                      <div>Collar: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.collar?.type || 'None'}</span></div>
+                      <div>Neckline: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.neckline?.type || 'None'}</span></div>
+                      <div>Cuffs: <span className="text-[#EDEDF0] font-medium capitalize">{workingSpec.cuffs?.[0]?.type || 'Standard'}</span></div>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Structural Components */}
                 <div className="p-3.5 bg-[#161719] rounded-xl border border-[#242529] space-y-2">
@@ -491,55 +512,93 @@ export default function DeconstructApprovalGateModal({
                   </select>
                 </div>
 
-                {/* Sleeve Type Override */}
-                <div className="space-y-1.5">
-                  <label className="text-[#EDEDF0] font-medium">Sleeve Construction</label>
-                  <select
-                    value={workingSpec.sleeve?.type || 'set-in'}
-                    onChange={(e) => handleFieldOverride('sleeve.type', e.target.value)}
-                    className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
-                  >
-                    <option value="set-in">Standard Set-In Sleeve</option>
-                    <option value="raglan">Raglan Sleeve (Diagonal Scye)</option>
-                    <option value="two-piece">Two-Piece Tailored Sleeve</option>
-                    <option value="sleeveless">Sleeveless</option>
-                    <option value="cap">Cap Sleeve</option>
-                  </select>
-                </div>
+                {isBottom ? (
+                  <>
+                    {/* Waistband Construction Override */}
+                    <div className="space-y-1.5">
+                      <label className="text-[#EDEDF0] font-medium">Waistband Construction</label>
+                      <select
+                        value={workingSpec.waistband?.type || 'straight'}
+                        onChange={(e) => handleFieldOverride('waistband.type', e.target.value)}
+                        className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
+                      >
+                        <option value="straight">Straight Interfaced Waistband</option>
+                        <option value="contour">Contoured Split-Back Waistband</option>
+                        <option value="curtain">Savile Row Curtain Waistband</option>
+                        <option value="elastic">Enclosed Elastic Waistband</option>
+                      </select>
+                    </div>
 
-                {/* Collar Type Override */}
-                <div className="space-y-1.5">
-                  <label className="text-[#EDEDF0] font-medium">Collar Configuration</label>
-                  <select
-                    value={workingSpec.collar?.type || 'none'}
-                    onChange={(e) => handleFieldOverride('collar.type', e.target.value)}
-                    className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
-                  >
-                    <option value="none">None (Clean Neckline)</option>
-                    <option value="spread">Spread Collar with Stand</option>
-                    <option value="notch_lapel">Notch Lapel (Suit / Blazer)</option>
-                    <option value="peak_lapel">Peak Lapel</option>
-                    <option value="band">Mandarin / Band Collar</option>
-                    <option value="flat_knit">Flat-Knit Ribbed Collar</option>
-                  </select>
-                </div>
+                    {/* Fly Fastener Mechanism Override */}
+                    <div className="space-y-1.5">
+                      <label className="text-[#EDEDF0] font-medium">Fly Closure Mechanism</label>
+                      <select
+                        value={workingSpec.closures?.[0]?.type || 'zipper'}
+                        onChange={(e) => {
+                          const updated = { ...(workingSpec.closures?.[0] || {}), type: e.target.value, placement: 'fly' };
+                          setWorkingSpec((prev) => ({ ...prev, closures: [updated] }));
+                        }}
+                        className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
+                      >
+                        <option value="zipper">Concealed Zipper Fly with Shield</option>
+                        <option value="button_fly">Tailored Button Fly Shield</option>
+                        <option value="hook_and_bar">Extended Tab Hook & Bar</option>
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Sleeve Type Override */}
+                    <div className="space-y-1.5">
+                      <label className="text-[#EDEDF0] font-medium">Sleeve Construction</label>
+                      <select
+                        value={workingSpec.sleeve?.type || 'set-in'}
+                        onChange={(e) => handleFieldOverride('sleeve.type', e.target.value)}
+                        className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
+                      >
+                        <option value="set-in">Standard Set-In Sleeve</option>
+                        <option value="raglan">Raglan Sleeve (Diagonal Scye)</option>
+                        <option value="two-piece">Two-Piece Tailored Sleeve</option>
+                        <option value="sleeveless">Sleeveless</option>
+                        <option value="cap">Cap Sleeve</option>
+                      </select>
+                    </div>
 
-                {/* Neckline Override */}
-                <div className="space-y-1.5">
-                  <label className="text-[#EDEDF0] font-medium">Neckline Shape</label>
-                  <select
-                    value={workingSpec.neckline?.type || 'crew'}
-                    onChange={(e) => handleFieldOverride('neckline.type', e.target.value)}
-                    className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
-                  >
-                    <option value="crew">Crew Neck</option>
-                    <option value="v-neck">V-Neck</option>
-                    <option value="boat">Boat Neck (Bateau)</option>
-                    <option value="scoop">Scoop Neck</option>
-                    <option value="sweetheart">Sweetheart</option>
-                    <option value="collared">Collared Placket</option>
-                  </select>
-                </div>
+                    {/* Collar Type Override */}
+                    <div className="space-y-1.5">
+                      <label className="text-[#EDEDF0] font-medium">Collar Configuration</label>
+                      <select
+                        value={workingSpec.collar?.type || 'none'}
+                        onChange={(e) => handleFieldOverride('collar.type', e.target.value)}
+                        className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
+                      >
+                        <option value="none">None (Clean Neckline)</option>
+                        <option value="spread">Spread Collar with Stand</option>
+                        <option value="notch_lapel">Notch Lapel (Suit / Blazer)</option>
+                        <option value="peak_lapel">Peak Lapel</option>
+                        <option value="band">Mandarin / Band Collar</option>
+                        <option value="flat_knit">Flat-Knit Ribbed Collar</option>
+                      </select>
+                    </div>
+
+                    {/* Neckline Override */}
+                    <div className="space-y-1.5">
+                      <label className="text-[#EDEDF0] font-medium">Neckline Shape</label>
+                      <select
+                        value={workingSpec.neckline?.type || 'crew'}
+                        onChange={(e) => handleFieldOverride('neckline.type', e.target.value)}
+                        className="w-full bg-[#1C1D21] border border-[#2D2E32] rounded-xl px-3 py-2 text-xs text-[#EDEDF0] focus:border-[#C5A059] outline-none"
+                      >
+                        <option value="crew">Crew Neck</option>
+                        <option value="v-neck">V-Neck</option>
+                        <option value="boat">Boat Neck (Bateau)</option>
+                        <option value="scoop">Scoop Neck</option>
+                        <option value="sweetheart">Sweetheart</option>
+                        <option value="collared">Collared Placket</option>
+                      </select>
+                    </div>
+                  </>
+                )}
 
                 {/* Fit Ease Override */}
                 <div className="space-y-1.5">

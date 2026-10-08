@@ -147,6 +147,52 @@ export class MockAIProvider extends AIProvider {
       };
     }
 
+    // 3b. Tailored Trouser / Slacks Test Case
+    if (
+      rawHint.includes('trouser') ||
+      rawHint.includes('pant') ||
+      rawHint.includes('slack') ||
+      rawHint.includes('chino') ||
+      rawHint.includes('bottom') ||
+      options.garmentType === 'trouser' ||
+      options.garmentSpecification?.garmentType === 'trouser' ||
+      options.garmentSpecification?.identity?.garmentType === 'trouser' ||
+      options.garmentSpecification?.identity?.category === 'bottoms'
+    ) {
+      const spec = createGarmentSpecification({
+        name: 'Pleated High-Rise Savile Row Trousers',
+        garmentType: 'trouser',
+        silhouette: 'classic',
+        waistband: createWaistbandComponent({ type: 'curtain' }),
+        neckline: 'NOT_APPLICABLE',
+        collar: 'NOT_APPLICABLE',
+        sleeve: 'NOT_APPLICABLE',
+        sleeves: 'NOT_APPLICABLE',
+        armholes: 'NOT_APPLICABLE',
+        boning: 'NOT_APPLICABLE',
+        pockets: [
+          createPocketComponent({ type: 'slant', placement: 'waist_front' }),
+          createPocketComponent({ type: 'welt', placement: 'back_hip' }),
+        ],
+        closures: [createClosureComponent({ type: 'zipper', placement: 'fly' })],
+        confidence: { overall: 0.96, identity: 0.97 },
+        status: SPEC_STATUS.NEEDS_REVIEW,
+      });
+
+      return {
+        success: true,
+        specification: spec,
+        observations: [
+          'High-waisted tailored trouser silhouette with sharp center crease lines detected.',
+          'Front slant side pockets and back double-welt pocket construction identified.',
+          'Lower-body anatomical block enforced: upper-body attributes are strictly NOT_APPLICABLE.',
+        ],
+        confidence: 0.96,
+        uncertainties: [],
+        sourceImages,
+      };
+    }
+
     // 4. Jeans (5-Pocket Denim) Test Case
     if (rawHint.includes('jean') || rawHint.includes('denim')) {
       const spec = createGarmentSpecification({

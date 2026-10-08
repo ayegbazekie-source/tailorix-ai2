@@ -79,6 +79,7 @@ import DraftingToolboxDrawer from './DraftingToolboxDrawer';
 import CuttingSheetItem from './CuttingSheetItem';
 import MagnifyingGlassLoupe from './MagnifyingGlassLoupe';
 import BigCuttingTable from './BigCuttingTable';
+import { createEditableCopyFromProject, ACTIVE_DECONSTRUCT_KEY } from '../../models/deconstructProject';
 import {
   TAILOR_RULERS_CATALOG,
   TAILOR_RULER_LIST,
@@ -409,6 +410,8 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const [showAdvancedDrawer, setShowAdvancedDrawer] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [importedNotice, setImportedNotice] = useState(null);
+  const [importedDeconstructReference, setImportedDeconstructReference] = useState(null);
+  const [isDeconstructReferenceReadOnly, setIsDeconstructReferenceReadOnly] = useState(true);
 
   const canvasSvgRef = useRef(null);
   const containerRef = useRef(null);
@@ -541,6 +544,135 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     }
   }, [cuttingSheets]);
 
+
+  // -------------------------------------------------------------------------
+  // Deconstruct Pattern Reference Ingestion & Protection (Read-Only Reference)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    try {
+      let deconstructProj = location.state?.deconstructProject;
+      if (!deconstructProj) {
+        const activeRaw = localStorage.getItem(ACTIVE_DECONSTRUCT_KEY);
+        if (activeRaw) {
+          deconstructProj = JSON.parse(activeRaw);
+        }
+      }
+      if (!deconstructProj) {
+        const params = new URLSearchParams(window.location.search);
+        const projId = params.get('project') || params.get('deconstructProject');
+        if (projId) {
+          const savedRaw = localStorage.getItem('tailorix_saved_projects');
+          if (savedRaw) {
+            const list = JSON.parse(savedRaw);
+            deconstructProj = list.find((p) => p.id === projId) || null;
+          }
+        }
+      }
+
+      if (deconstructProj) {
+        setImportedDeconstructReference(deconstructProj);
+        const isReadOnly = deconstructProj.isReadOnlyReference !== false;
+        setIsDeconstructReferenceReadOnly(isReadOnly);
+
+        const rawPieces = deconstructProj.patternPieces || deconstructProj.patternBlueprint?.pieces || [];
+        if (rawPieces.length > 0) {
+          const newLayers = rawPieces.map((p, idx) => ({
+            id: `layer-deconstruct-${p.id || idx + 1}`,
+            name: p.name || `Piece ${idx + 1}`,
+            bodiceType: p.name,
+            visible: p.visible !== false,
+            locked: isReadOnly, // LOCKED BY DEFAULT (Read-Only Original Reference)
+            isDeconstructReference: true,
+            opacity: 1.0,
+            elements: [],
+            piece: {
+              id: p.id || `piece_${idx + 1}`,
+              name: p.name,
+              svgPath: p.outline || p.svgPath || p.path,
+              path: p.outline || p.svgPath || p.path,
+              bounds: p.bounds || { minX: 0, minY: 0, width: 120, height: 160 },
+              grainline: p.grainline || { label: p.onFold ? 'CENTER FOLD' : 'LENGTHWISE GRAIN' },
+              notches: p.notches || [],
+              onFold: p.onFold,
+              cutQuantity: p.cutQuantity || 2,
+              cutQuantityLabel: p.cutQuantityLabel,
+              seamAllowance: p.seamAllowance || 0.5,
+              seamAllowancePath: p.seamAllowancePath,
+            },
+            offsetX: p.x ?? (80 + (idx % 3) * 320),
+            offsetY: p.y ?? (60 + Math.floor(idx / 3) * 360),
+            rotation: p.rotation || 0,
+          }));
+
+          setLayers(newLayers);
+          setActiveLayerId(newLayers[0]?.id || 'layer-1');
+          setShowLayerPanel(true);
+
+          setImportedNotice(
+            isReadOnly
+              ? `🔒 Imported "${deconstructProj.title || deconstructProj.name}" from Deconstruct as a Read-Only Reference.`
+              : `✓ Imported "${deconstructProj.title || deconstructProj.name}" (Editable Copy).`
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Deconstruct reference ingestion error:', err);
+    }
+  }, [location.state]);
+
+  const handleCreateEditableCopy = () => {
+    if (!importedDeconstructReference) return;
+    const copy = createEditableCopyFromProject(importedDeconstructReference);
+    setIsDeconstructReferenceReadOnly(false);
+    setImportedDeconstructReference(copy);
+    setLayers((prev) =>
+      prev.map((l) => ({
+        ...l,
+        locked: false,
+        isDeconstructReference: false,
+        isEditableCopy: true,
+      }))
+    );
+    setImportedNotice(`✓ Created editable copy: "${copy.title}". All drafting tools are now unlocked.`);
+  };
+
+  const handleSendDeconstructToCuttingTable = () => {
+    if (!importedDeconstructReference) return;
+    const pieces = layers
+      .filter((l) => l.piece)
+      .map((l) => ({
+        id: l.piece.id,
+        name: l.piece.name || l.name,
+        svgPath: l.piece.svgPath || l.piece.path,
+        path: l.piece.svgPath || l.piece.path,
+        cutQuantity: l.piece.cutQuantity || 2,
+        grainline: l.piece.grainline,
+        bounds: l.piece.bounds,
+        onFold: l.piece.onFold,
+      }));
+
+    const payload = {
+      source: 'deconstruct',
+      garmentType: importedDeconstructReference.garmentTaxonomy?.garmentType || 'trouser',
+      fabricCanvasUrl: importedDeconstructReference.fabricName || 'selvedge_denim',
+      patternPieces: pieces,
+    };
+
+    try {
+      localStorage.setItem('tailorix_studio_payload', JSON.stringify(payload));
+    } catch (e) {}
+
+    handleSelectSubTab('cutting');
+    setImportedNotice(`✂️ Transferred ${pieces.length} pattern pieces to Cutting Table!`);
+  };
+
+  const handleCloseDeconstructReference = () => {
+    setImportedDeconstructReference(null);
+    setIsDeconstructReferenceReadOnly(false);
+    try {
+      localStorage.removeItem(ACTIVE_DECONSTRUCT_KEY);
+    } catch (e) {}
+  };
 
   const handleManualImportPhotoPattern = () => {
     try {
@@ -1113,6 +1245,245 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   };
 
   // -------------------------------------------------------------------------
+  // Tailored Bodice & Sleeve Pattern Computational Geometry Generator
+  // -------------------------------------------------------------------------
+  const generateBodicePatternForSheet = (sheet) => {
+    if (!sheet) return null;
+    const isMirrored = Boolean(sheet.isMirrored);
+    const effW = isMirrored ? sheet.width * 2 : sheet.width;
+    const effH = sheet.height;
+    const type = sheet.type || '';
+
+    if (type === 'bodice_front') {
+      const midX = isMirrored ? effW / 2 : 20;
+      const halfW = isMirrored ? effW / 2 : effW - 40;
+      const topY = Math.round(effH * 0.06);
+      const botY = Math.round(effH * 0.92);
+      const scyeY = Math.round(topY + (botY - topY) * 0.44);
+
+      const neckTop = { x: midX, y: topY };
+      const neckSide = { x: Math.round(midX + halfW * 0.38), y: Math.round(topY + (scyeY - topY) * 0.16) };
+      const shoulderTip = { x: Math.round(midX + halfW * 0.74), y: Math.round(topY + (scyeY - topY) * 0.38) };
+      const scyeBase = { x: Math.round(midX + halfW * 0.86), y: scyeY };
+      const waistSide = { x: Math.round(midX + halfW * 0.78), y: botY };
+      const waistCenter = { x: midX, y: botY };
+
+      let cutlinePath = '';
+      const dartPaths = [];
+
+      if (isMirrored) {
+        cutlinePath = [
+          `M ${neckTop.x} ${neckTop.y}`,
+          `C ${midX + halfW * 0.18} ${topY + 2}, ${midX + halfW * 0.32} ${neckSide.y - 4}, ${neckSide.x} ${neckSide.y}`,
+          `L ${shoulderTip.x} ${shoulderTip.y}`,
+          `C ${midX + halfW * 0.62} ${scyeY - 26}, ${midX + halfW * 0.82} ${scyeY - 6}, ${scyeBase.x} ${scyeBase.y}`,
+          `L ${waistSide.x} ${waistSide.y}`,
+          `C ${midX + halfW * 0.5} ${botY + 4}, ${midX + halfW * 0.22} ${botY + 3}, ${waistCenter.x} ${waistCenter.y}`,
+          `C ${midX - halfW * 0.22} ${botY + 3}, ${midX - halfW * 0.5} ${botY + 4}, ${midX - (waistSide.x - midX)} ${waistSide.y}`,
+          `L ${midX - (scyeBase.x - midX)} ${scyeBase.y}`,
+          `C ${midX - halfW * 0.82} ${scyeY - 6}, ${midX - halfW * 0.62} ${scyeY - 26}, ${midX - (shoulderTip.x - midX)} ${shoulderTip.y}`,
+          `L ${midX - (neckSide.x - midX)} ${neckSide.y}`,
+          `C ${midX - halfW * 0.32} ${neckSide.y - 4}, ${midX - halfW * 0.18} ${topY + 2}, ${neckTop.x} ${neckTop.y}`,
+          'Z',
+        ].join(' ');
+
+        // Bust darts
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.80} ${scyeY + 24} L ${midX + halfW * 0.44} ${scyeY + 12} L ${midX + halfW * 0.79} ${scyeY + 42}`,
+          label: 'Right Bust Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX - halfW * 0.80} ${scyeY + 24} L ${midX - halfW * 0.44} ${scyeY + 12} L ${midX - halfW * 0.79} ${scyeY + 42}`,
+          label: 'Left Bust Dart',
+        });
+        // Waist darts
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.38} ${botY} L ${midX + halfW * 0.44} ${scyeY + 22} L ${midX + halfW * 0.50} ${botY}`,
+          label: 'Right Waist Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX - halfW * 0.38} ${botY} L ${midX - halfW * 0.44} ${scyeY + 22} L ${midX - halfW * 0.50} ${botY}`,
+          label: 'Left Waist Dart',
+        });
+      } else {
+        cutlinePath = [
+          `M ${neckTop.x} ${neckTop.y}`,
+          `C ${midX + halfW * 0.18} ${topY + 2}, ${midX + halfW * 0.32} ${neckSide.y - 4}, ${neckSide.x} ${neckSide.y}`,
+          `L ${shoulderTip.x} ${shoulderTip.y}`,
+          `C ${midX + halfW * 0.62} ${scyeY - 26}, ${midX + halfW * 0.82} ${scyeY - 6}, ${scyeBase.x} ${scyeBase.y}`,
+          `L ${waistSide.x} ${waistSide.y}`,
+          `C ${midX + halfW * 0.5} ${botY + 4}, ${midX + halfW * 0.22} ${botY + 3}, ${waistCenter.x} ${waistCenter.y}`,
+          `L ${neckTop.x} ${neckTop.y}`,
+          'Z',
+        ].join(' ');
+
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.80} ${scyeY + 24} L ${midX + halfW * 0.44} ${scyeY + 12} L ${midX + halfW * 0.79} ${scyeY + 42}`,
+          label: 'Bust Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.38} ${botY} L ${midX + halfW * 0.44} ${scyeY + 22} L ${midX + halfW * 0.50} ${botY}`,
+          label: 'Waist Dart',
+        });
+      }
+
+      return {
+        type: 'bodice_front',
+        name: 'FRONT BODICE PANEL',
+        cutlinePath,
+        dartPaths,
+        grainline: {
+          x1: isMirrored ? Math.round(midX + halfW * 0.44) : Math.round(midX + halfW * 0.5),
+          y1: Math.round(topY + 25),
+          x2: isMirrored ? Math.round(midX + halfW * 0.44) : Math.round(midX + halfW * 0.5),
+          y2: Math.round(botY - 20),
+          label: 'LENGTHWISE GRAIN',
+        },
+        notches: [
+          { x: scyeBase.x, y: scyeBase.y, label: 'Single Scye Notch' },
+          { x: waistCenter.x, y: waistCenter.y, label: 'Center Front Fold' },
+        ],
+        watermarkText: 'FRONT BODICE (CUT 2)',
+      };
+    }
+
+    if (type === 'bodice_back') {
+      const midX = isMirrored ? effW / 2 : 20;
+      const halfW = isMirrored ? effW / 2 : effW - 40;
+      const topY = Math.round(effH * 0.06);
+      const botY = Math.round(effH * 0.92);
+      const scyeY = Math.round(topY + (botY - topY) * 0.44);
+
+      const neckTop = { x: midX, y: topY + 8 };
+      const neckSide = { x: Math.round(midX + halfW * 0.38), y: Math.round(topY + (scyeY - topY) * 0.14) };
+      const shoulderTip = { x: Math.round(midX + halfW * 0.74), y: Math.round(topY + (scyeY - topY) * 0.36) };
+      const scyeBase = { x: Math.round(midX + halfW * 0.84), y: scyeY };
+      const waistSide = { x: Math.round(midX + halfW * 0.76), y: botY };
+      const waistCenter = { x: midX, y: botY };
+
+      let cutlinePath = '';
+      const dartPaths = [];
+
+      if (isMirrored) {
+        cutlinePath = [
+          `M ${neckTop.x} ${neckTop.y}`,
+          `C ${midX + halfW * 0.16} ${topY + 8}, ${midX + halfW * 0.32} ${neckSide.y - 2}, ${neckSide.x} ${neckSide.y}`,
+          `L ${shoulderTip.x} ${shoulderTip.y}`,
+          `C ${midX + halfW * 0.64} ${scyeY - 24}, ${midX + halfW * 0.80} ${scyeY - 6}, ${scyeBase.x} ${scyeBase.y}`,
+          `L ${waistSide.x} ${waistSide.y}`,
+          `L ${waistCenter.x} ${waistCenter.y}`,
+          `L ${midX - (waistSide.x - midX)} ${waistSide.y}`,
+          `L ${midX - (scyeBase.x - midX)} ${scyeBase.y}`,
+          `C ${midX - halfW * 0.80} ${scyeY - 6}, ${midX - halfW * 0.64} ${scyeY - 24}, ${midX - (shoulderTip.x - midX)} ${shoulderTip.y}`,
+          `L ${midX - (neckSide.x - midX)} ${neckSide.y}`,
+          `C ${midX - halfW * 0.32} ${neckSide.y - 2}, ${midX - halfW * 0.16} ${topY + 8}, ${neckTop.x} ${neckTop.y}`,
+          'Z',
+        ].join(' ');
+
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.40} ${botY} L ${midX + halfW * 0.45} ${scyeY + 16} L ${midX + halfW * 0.50} ${botY}`,
+          label: 'Right Back Waist Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX - halfW * 0.40} ${botY} L ${midX - halfW * 0.45} ${scyeY + 16} L ${midX - halfW * 0.50} ${botY}`,
+          label: 'Left Back Waist Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.52} ${topY + 22} L ${midX + halfW * 0.50} ${topY + 55} L ${midX + halfW * 0.56} ${topY + 24}`,
+          label: 'Right Shoulder Dart',
+        });
+        dartPaths.push({
+          path: `M ${midX - halfW * 0.52} ${topY + 22} L ${midX - halfW * 0.50} ${topY + 55} L ${midX - halfW * 0.56} ${topY + 24}`,
+          label: 'Left Shoulder Dart',
+        });
+      } else {
+        cutlinePath = [
+          `M ${neckTop.x} ${neckTop.y}`,
+          `C ${midX + halfW * 0.16} ${topY + 8}, ${midX + halfW * 0.32} ${neckSide.y - 2}, ${neckSide.x} ${neckSide.y}`,
+          `L ${shoulderTip.x} ${shoulderTip.y}`,
+          `C ${midX + halfW * 0.64} ${scyeY - 24}, ${midX + halfW * 0.80} ${scyeY - 6}, ${scyeBase.x} ${scyeBase.y}`,
+          `L ${waistSide.x} ${waistSide.y}`,
+          `L ${waistCenter.x} ${waistCenter.y}`,
+          `L ${neckTop.x} ${neckTop.y}`,
+          'Z',
+        ].join(' ');
+
+        dartPaths.push({
+          path: `M ${midX + halfW * 0.40} ${botY} L ${midX + halfW * 0.45} ${scyeY + 16} L ${midX + halfW * 0.50} ${botY}`,
+          label: 'Back Waist Dart',
+        });
+      }
+
+      return {
+        type: 'bodice_back',
+        name: 'BACK BODICE PANEL',
+        cutlinePath,
+        dartPaths,
+        grainline: {
+          x1: isMirrored ? Math.round(midX + halfW * 0.44) : Math.round(midX + halfW * 0.5),
+          y1: Math.round(topY + 25),
+          x2: isMirrored ? Math.round(midX + halfW * 0.44) : Math.round(midX + halfW * 0.5),
+          y2: Math.round(botY - 20),
+          label: 'CENTER BACK FOLD / GRAIN',
+        },
+        notches: [
+          { x: scyeBase.x, y: scyeBase.y, label: 'Double Scye Notch' },
+          { x: waistCenter.x, y: waistCenter.y, label: 'Center Back Fold' },
+        ],
+        watermarkText: 'BACK BODICE (CUT 1 ON FOLD)',
+      };
+    }
+
+    if (type === 'sleeve') {
+      const midX = Math.round(effW / 2);
+      const topY = Math.round(effH * 0.06);
+      const botY = Math.round(effH * 0.92);
+      const bicepY = Math.round(topY + (botY - topY) * 0.30);
+      const wristHalfW = Math.round(effW * 0.25);
+
+      const cutlinePath = [
+        `M ${midX} ${topY}`,
+        `C ${midX + effW * 0.22} ${topY + 4}, ${effW - 16} ${topY + (bicepY - topY) * 0.55}, ${effW - 12} ${bicepY}`,
+        `L ${midX + wristHalfW} ${botY}`,
+        `L ${midX - wristHalfW} ${botY}`,
+        `L 12 ${bicepY}`,
+        `C 16 ${topY + (bicepY - topY) * 0.55}, ${midX - effW * 0.22} ${topY + 4}, ${midX} ${topY}`,
+        'Z',
+      ].join(' ');
+
+      const dartPaths = [
+        { path: `M 12 ${bicepY} L ${effW - 12} ${bicepY}`, label: 'Bicep Level' },
+        {
+          path: `M ${Math.round(midX - effW * 0.26)} ${Math.round(bicepY + (botY - bicepY) * 0.5)} L ${Math.round(midX + effW * 0.26)} ${Math.round(bicepY + (botY - bicepY) * 0.5)}`,
+          label: 'Elbow Line',
+        },
+      ];
+
+      return {
+        type: 'sleeve',
+        name: 'SET-IN SLEEVE PANEL',
+        cutlinePath,
+        dartPaths,
+        grainline: {
+          x1: midX,
+          y1: bicepY,
+          x2: midX,
+          y2: botY - 18,
+          label: 'SLEEVE GRAINLINE',
+        },
+        notches: [
+          { x: midX, y: topY, label: 'Shoulder Cap Notch' },
+          { x: effW - 12, y: bicepY, label: 'Front Underarm Notch' },
+          { x: 12, y: bicepY, label: 'Back Double Notch' },
+        ],
+        watermarkText: 'SET-IN SLEEVE (CUT 2)',
+      };
+    }
+
+    return null;
+  };
+
+  // -------------------------------------------------------------------------
   // Cutting Sheet Management (Spawning, Duplicating, Mirroring & Seam Allowances)
   // -------------------------------------------------------------------------
   const handleAddBodiceBlock = (type) => {
@@ -1156,6 +1527,7 @@ export default function DraftingBoardWorkspace({ initialTab }) {
   const handleSpawnBodiceCutSheet = (type) => {
     if (type === 'custom') {
       setActiveTool((curr) => (curr === 'draw_sheet' ? 'chalk' : 'draw_sheet'));
+      showToast('Custom sheet drawing tool activated: Click and drag on canvas to draft sheet.', 'info');
       return;
     }
     handleAddBodiceBlock(type);
@@ -1170,12 +1542,10 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     let defaultH = config.height || 480;
     const isMirrored = config.isMirrored !== undefined ? config.isMirrored : false;
 
-    // Mobile layout constraints: "shrink everything just to fit the screen in mobile mode including the cut sheets or automatic bodice generated"
+    // Mobile layout constraints: shrink smoothly to fit screen width
     if (isMobile) {
       if (isMirrored) {
-        // Mirrored sheet effective total width is 2 * defaultW
-        // Shrink half-width to max 125px so total width is 250px (fits safely inside 360-390px mobile screens)
-        defaultW = Math.min(config.width ? Math.min(config.width, 125) : 125, 125);
+        defaultW = Math.min(config.width ? Math.min(config.width, 130) : 130, 130);
         defaultH = Math.min(config.height || 280, 280);
       } else {
         defaultW = Math.min(config.width || 220, 220);
@@ -1186,15 +1556,15 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     const effW = isMirrored ? defaultW * 2 : defaultW;
     const effH = defaultH;
 
-    // User requirement: "Spawn cutting sheets and Auto Bodice blocks should work similarly as the spawn cutting sheets, they bring in the cut sheet bodice straight to the top of the screen. Introducing a cut sheet from these drawer should come straight to the top region of the board not at the lower region."
     const sheetCount = cuttingSheets.length;
     const effectiveZoom = isMobile ? Math.min(zoom, 0.65) : zoom;
     if (isMobile && zoom > 0.65) {
       setZoom(0.65);
     }
 
-    // Top screen region offset: 15px on mobile, 25px on desktop below the workspace header
-    const targetTopScreenY = isMobile ? 15 : (25 + (sheetCount % 4) * 15);
+    // Top screen region offset: Spawns in clear visible workspace below the 104px headers
+    const headerTotalHeight = isMobile ? 108 : 118;
+    const targetTopScreenY = headerTotalHeight + 20 + (sheetCount % 4) * 18;
     let gridX = config.x !== undefined
       ? config.x
       : Math.round(((vpW / 2) - (effW * effectiveZoom) / 2 - panOffset.x) / effectiveZoom + (isMobile ? 0 : ((sheetCount % 3) - 1) * 20));
@@ -1205,6 +1575,17 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     const sheetId = `sheet_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const sheetName = config.name || `Cutting Sheet ${sheetCount + 1}`;
     const layerId = `layer_sheet_${sheetId}`;
+
+    // Compute tailored bodice pattern geometry for the sheet
+    const prototypeSheet = {
+      id: sheetId,
+      name: sheetName,
+      type: config.type || 'custom_rect',
+      width: defaultW,
+      height: defaultH,
+      isMirrored: isMirrored,
+    };
+    const bodicePattern = generateBodicePatternForSheet(prototypeSheet);
 
     const newSheet = {
       id: sheetId,
@@ -1221,18 +1602,27 @@ export default function DraftingBoardWorkspace({ initialTab }) {
       hasSeamAllowance: config.hasSeamAllowance !== undefined ? config.hasSeamAllowance : true,
       seamAllowanceInches: config.seamAllowanceInches || 0.625,
       layerId: layerId,
+      bodicePattern: bodicePattern,
     };
 
     // User requirement: "when a cutting sheet is drawn, add it as a layer where users can draw on, change the color and even the chalk color to a color that can appear on the cutting sheet visibly."
     const newLayer = {
       id: layerId,
       name: `Sheet: ${sheetName}`,
-      bodiceType: 'Cutting Sheet Drafting',
+      bodiceType: config.type ? `${config.type.toUpperCase()} Cut Sheet` : 'Cutting Sheet Drafting',
       visible: true,
       locked: false,
       opacity: 1.0,
       elements: [],
-      piece: null,
+      piece: bodicePattern ? {
+        id: `piece_${sheetId}`,
+        name: sheetName,
+        svgPath: bodicePattern.cutlinePath,
+        grainline: bodicePattern.grainline,
+        notches: bodicePattern.notches,
+        darts: bodicePattern.dartPaths,
+        type: newSheet.type,
+      } : null,
       offsetX: 0,
       offsetY: 0,
       rotation: 0,
@@ -1249,6 +1639,17 @@ export default function DraftingBoardWorkspace({ initialTab }) {
     if (newSheet.color === '#ffffff' || newSheet.color === '#fefce8') {
       setBrushColor('#0284c7');
     }
+
+    // Smoothly ensure viewport focuses on the newly rendered sheet
+    const currentScreenY = gridY * zoom + panOffset.y;
+    if (currentScreenY < headerTotalHeight || currentScreenY > vpH - 150) {
+      setPanOffset((prev) => ({
+        ...prev,
+        y: Math.round(targetTopScreenY - gridY * zoom),
+      }));
+    }
+
+    showToast(`Rendered ${sheetName} on pattern board!`, 'success');
     return newSheet;
   };
 
@@ -3101,85 +3502,16 @@ export default function DraftingBoardWorkspace({ initialTab }) {
               <div className="relative shrink-0">
                 <button
                   onClick={() => setMobileBodiceMenuOpen((prev) => !prev)}
-                  className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-300 text-xs font-bold flex items-center gap-1 transition-all whitespace-nowrap"
+                  className={`px-2.5 py-1 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shadow-xs active:scale-95 ${
+                    mobileBodiceMenuOpen
+                      ? 'bg-amber-500 text-slate-950 border-amber-300 font-extrabold shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                      : 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-400/70 text-amber-300'
+                  }`}
                   title="Spawn Cut Sheets (+Bodice): Front, Back, Sleeve & Custom"
                 >
-                  <Shirt className="w-3.5 h-3.5 text-amber-400" />
+                  <Shirt className={`w-3.5 h-3.5 ${mobileBodiceMenuOpen ? 'text-slate-950' : 'text-amber-400'}`} />
                   <span>+ Bodice</span>
                 </button>
-                {mobileBodiceMenuOpen && (
-                  <div className="absolute right-0 top-full mt-2 z-[90] bg-[#0d1322] border border-slate-700/90 rounded-2xl shadow-2xl p-2 w-52 text-slate-200 space-y-1">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-1 px-1 text-[11px] font-bold text-amber-400 uppercase">
-                      <span>Spawn Cut Sheets (+Bodice)</span>
-                      <button onClick={() => setMobileBodiceMenuOpen(false)} className="text-slate-400 hover:text-white">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => {
-                        handleSpawnBodiceCutSheet('front');
-                        setMobileBodiceMenuOpen(false);
-                      }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Front Bodice Sheet</span>
-                      </span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        handleSpawnBodiceCutSheet('back');
-                        setMobileBodiceMenuOpen(false);
-                      }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Back Bodice Sheet</span>
-                      </span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        handleSpawnBodiceCutSheet('sleeve');
-                        setMobileBodiceMenuOpen(false);
-                      }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Plus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Sleeve Sheet</span>
-                      </span>
-                      <span className="text-[10px] text-amber-400/80 font-mono">Cut Sheet</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        handleSpawnBodiceCutSheet('custom');
-                        setMobileBodiceMenuOpen(false);
-                      }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 hover:text-amber-300 text-slate-200 transition-colors flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Square className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Draw Custom Sheet</span>
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono">Tool</span>
-                    </button>
-                    <div className="pt-1 border-t border-slate-800">
-                      <button
-                        onClick={() => {
-                          setMobileBodiceMenuOpen(false);
-                          setMobileHeaderDrawerOpen(true);
-                        }}
-                        className="w-full text-center py-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300"
-                      >
-                        Open in Drawer Options →
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             </>
           )}
@@ -3206,6 +3538,131 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Mobile +Bodice Cut Sheets Modal Popover (Rendered outside carousel scroll so it is never clipped) */}
+      {mobileBodiceMenuOpen && (
+        <div
+          className="fixed inset-0 z-[120] flex items-start justify-center pt-24 px-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setMobileBodiceMenuOpen(false)}
+        >
+          <div
+            className="bg-[#0d1322] border border-amber-500/60 rounded-2xl shadow-2xl p-3.5 w-full max-w-xs text-slate-200 space-y-2.5 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 px-1 text-xs font-bold text-amber-400 uppercase tracking-wider">
+              <span className="flex items-center gap-1.5">
+                <Shirt className="w-4 h-4 text-amber-400" />
+                <span>Spawn Cut Sheets (+Bodice)</span>
+              </span>
+              <button
+                onClick={() => setMobileBodiceMenuOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 px-1 leading-tight">
+              Select a cut sheet to render on the pattern drafting board:
+            </p>
+
+            <div className="space-y-1.5">
+              <button
+                onClick={() => {
+                  handleSpawnBodiceCutSheet('front');
+                  setMobileBodiceMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 rounded-xl bg-slate-800/60 hover:bg-amber-500/20 hover:text-amber-300 text-slate-100 transition-all flex items-center justify-between border border-slate-700/60 hover:border-amber-500/50 group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block text-slate-100 group-hover:text-amber-300">Front Bodice Sheet</span>
+                    <span className="text-[10px] text-slate-400">Front panel with scye curve & bust dart</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-amber-400 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">
+                  Cut Sheet
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  handleSpawnBodiceCutSheet('back');
+                  setMobileBodiceMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 rounded-xl bg-slate-800/60 hover:bg-amber-500/20 hover:text-amber-300 text-slate-100 transition-all flex items-center justify-between border border-slate-700/60 hover:border-amber-500/50 group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block text-slate-100 group-hover:text-amber-300">Back Bodice Sheet</span>
+                    <span className="text-[10px] text-slate-400">Back panel with shoulder & waist darts</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-amber-400 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">
+                  Cut Sheet
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  handleSpawnBodiceCutSheet('sleeve');
+                  setMobileBodiceMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 rounded-xl bg-slate-800/60 hover:bg-amber-500/20 hover:text-amber-300 text-slate-100 transition-all flex items-center justify-between border border-slate-700/60 hover:border-amber-500/50 group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block text-slate-100 group-hover:text-amber-300">Sleeve Sheet</span>
+                    <span className="text-[10px] text-slate-400">Tailored set-in sleeve with cap curve</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-amber-400 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">
+                  Cut Sheet
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  handleSpawnBodiceCutSheet('custom');
+                  setMobileBodiceMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white transition-all flex items-center justify-between border border-slate-800"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Square className="w-4 h-4 text-amber-400" />
+                  <div>
+                    <span className="text-xs font-medium block">Draw Custom Sheet</span>
+                    <span className="text-[10px] text-slate-400">Freehand rectangular sheet drafting tool</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono">Tool</span>
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800">
+              <button
+                onClick={() => {
+                  setMobileBodiceMenuOpen(false);
+                  setMobileHeaderDrawerOpen(true);
+                }}
+                className="w-full text-center py-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                Open in Full Drawer Options →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Drafting / Cutting Options Drawer (Positioned correctly on screen, refined typography, and scrolling effect) */}
       {mobileHeaderDrawerOpen && (
@@ -3855,6 +4312,71 @@ export default function DraftingBoardWorkspace({ initialTab }) {
           <button onClick={() => setImportedNotice(null)}>
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Imported Deconstruct Reference Docked Bar (Read-Only Original vs Editable Copy) */}
+      {importedDeconstructReference && (
+        <div className="bg-[#141517] border-b border-[#C5A059]/40 px-4 py-2 flex flex-wrap items-center justify-between gap-3 z-40 shadow-md">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+              isDeconstructReferenceReadOnly ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-400'
+            }`}>
+              {isDeconstructReferenceReadOnly ? <Lock className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#C5A059]">
+                  Imported Deconstruct Reference
+                </span>
+                <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full border ${
+                  isDeconstructReferenceReadOnly
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                }`}>
+                  {isDeconstructReferenceReadOnly ? 'READ-ONLY REFERENCE' : 'EDITABLE COPY'}
+                </span>
+              </div>
+              <h4 className="text-xs font-semibold text-[#EDEDF0]">
+                {importedDeconstructReference.title || importedDeconstructReference.name || 'Garment Blueprint'}
+              </h4>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isDeconstructReferenceReadOnly ? (
+              <button
+                onClick={handleCreateEditableCopy}
+                className="px-3 py-1.5 bg-[#C5A059] hover:bg-[#D4AF37] text-slate-950 font-bold rounded-xl text-xs transition-all shadow-gold-sm flex items-center gap-1.5 cursor-pointer"
+                title="Create an editable duplicate layer stack without mutating the original saved Deconstruct project"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Create Editable Copy</span>
+              </button>
+            ) : (
+              <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" />
+                <span>Unlocked for Editing</span>
+              </span>
+            )}
+
+            <button
+              onClick={handleSendDeconstructToCuttingTable}
+              className="px-2.5 py-1.5 bg-[#18191C] hover:bg-[#202226] text-amber-300 hover:text-amber-200 border border-[#28292D] rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"
+              title="Transfer pattern pieces directly to the Cutting Table"
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              <span>Cutting Table</span>
+            </button>
+
+            <button
+              onClick={handleCloseDeconstructReference}
+              className="p-1.5 hover:bg-[#202226] text-zinc-400 hover:text-white rounded-lg transition-colors"
+              title="Close Reference Banner"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -5305,20 +5827,122 @@ export default function DraftingBoardWorkspace({ initialTab }) {
                       </g>
                     )}
 
-                    {/* Subtle Watermark Branding on Plain Surface */}
-                    <text
-                      x={sheet.x + effW / 2}
-                      y={sheet.y + effH / 2}
-                      fill={sheet.color === '#1e293b' ? '#94a3b8' : '#64748b'}
-                      fontSize="11"
-                      fontWeight="bold"
-                      fontFamily="sans-serif"
-                      letterSpacing="3"
-                      textAnchor="middle"
-                      opacity="0.3"
-                    >
-                      {sheet.name.toUpperCase()} (PLAIN CUTTING SHEET)
-                    </text>
+                    {/* Render Tailored Bodice Pattern Geometry (Front, Back, Sleeve) directly onto Cut Sheet */}
+                    {(() => {
+                      const bodicePattern = sheet.bodicePattern || generateBodicePatternForSheet(sheet);
+                      if (bodicePattern) {
+                        return (
+                          <g transform={`translate(${sheet.x}, ${sheet.y})`} className="pointer-events-none">
+                            {/* Pattern Cutline Contour with soft tinted fill & tailored stroke */}
+                            <path
+                              d={bodicePattern.cutlinePath}
+                              fill="#0284c7"
+                              fillOpacity="0.14"
+                              stroke="#0284c7"
+                              strokeWidth="2.2"
+                              strokeLinejoin="round"
+                              strokeLinecap="round"
+                            />
+
+                            {/* Tailor Dart Lines & Internal Guides */}
+                            {bodicePattern.dartPaths?.map((dart, dIdx) => (
+                              <path
+                                key={dIdx}
+                                d={dart.path}
+                                fill="none"
+                                stroke="#0369a1"
+                                strokeWidth="1.6"
+                                strokeDasharray="4 2"
+                              />
+                            ))}
+
+                            {/* Grainline Vector Arrow */}
+                            {bodicePattern.grainline && (
+                              <g stroke="#d97706" strokeWidth="1.5">
+                                <line
+                                  x1={bodicePattern.grainline.x1}
+                                  y1={bodicePattern.grainline.y1}
+                                  x2={bodicePattern.grainline.x2}
+                                  y2={bodicePattern.grainline.y2}
+                                />
+                                <circle cx={bodicePattern.grainline.x1} cy={bodicePattern.grainline.y1} r="3" fill="#d97706" />
+                                <circle cx={bodicePattern.grainline.x2} cy={bodicePattern.grainline.y2} r="3" fill="#d97706" />
+                                <text
+                                  x={bodicePattern.grainline.x1 + 6}
+                                  y={(bodicePattern.grainline.y1 + bodicePattern.grainline.y2) / 2}
+                                  fill="#d97706"
+                                  fontSize="8.5"
+                                  fontFamily="monospace"
+                                  fontWeight="bold"
+                                  stroke="none"
+                                >
+                                  {bodicePattern.grainline.label}
+                                </text>
+                              </g>
+                            )}
+
+                            {/* Tailor Notches */}
+                            {bodicePattern.notches?.map((notch, nIdx) => (
+                              <g key={nIdx}>
+                                <circle cx={notch.x} cy={notch.y} r="2.5" fill="#f59e0b" />
+                                <line
+                                  x1={notch.x - 4}
+                                  y1={notch.y}
+                                  x2={notch.x + 4}
+                                  y2={notch.y}
+                                  stroke="#f59e0b"
+                                  strokeWidth="1.5"
+                                />
+                              </g>
+                            ))}
+
+                            {/* Pattern Title Badge */}
+                            <g>
+                              <rect
+                                x={effW / 2 - 75}
+                                y={12}
+                                width="150"
+                                height="18"
+                                rx="9"
+                                fill="#0f172a"
+                                fillOpacity="0.85"
+                                stroke="#0284c7"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={effW / 2}
+                                y={24}
+                                fill="#38bdf8"
+                                fontSize="9.5"
+                                fontWeight="bold"
+                                fontFamily="monospace"
+                                letterSpacing="1"
+                                textAnchor="middle"
+                              >
+                                {bodicePattern.watermarkText}
+                              </text>
+                            </g>
+                          </g>
+                        );
+                      }
+
+                      {/* Fallback Watermark for plain custom sheets */}
+                      return (
+                        <text
+                          x={sheet.x + effW / 2}
+                          y={sheet.y + effH / 2}
+                          fill={sheet.color === '#1e293b' ? '#94a3b8' : '#64748b'}
+                          fontSize="11"
+                          fontWeight="bold"
+                          fontFamily="sans-serif"
+                          letterSpacing="3"
+                          textAnchor="middle"
+                          opacity="0.3"
+                        >
+                          {sheet.name.toUpperCase()} (PLAIN CUTTING SHEET)
+                        </text>
+                      );
+                    })()}
                   </g>
                 );
               })}

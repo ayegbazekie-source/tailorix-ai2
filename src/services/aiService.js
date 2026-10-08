@@ -5,8 +5,9 @@ import { logger } from '../utils/deconstructLogger';
 import { aiOrchestrator } from './ai/aiOrchestrator';
 
 const isSupabaseConfigured = Boolean(
-  import.meta.env.VITE_SUPABASE_URL &&
-  import.meta.env.VITE_SUPABASE_ANON_KEY &&
+  typeof import.meta !== 'undefined' &&
+  import.meta?.env?.VITE_SUPABASE_URL &&
+  import.meta?.env?.VITE_SUPABASE_ANON_KEY &&
   import.meta.env.VITE_SUPABASE_URL.startsWith('http') &&
   !import.meta.env.VITE_SUPABASE_URL.includes('placeholder')
 );
@@ -243,20 +244,31 @@ export async function deconstructGarmentImages(images, options = {}) {
     };
   }
 
-  // Fallback to local heuristic
-  const rawList = Array.isArray(images) ? images : [images];
-  const firstImg = rawList[0]?.data || rawList[0];
-  const localData = deconstructGarmentLocally(firstImg, options);
-  const canonical = normalizeSpecification(localData);
+  if (options.enableDevMockMode === true) {
+    logger.deconstruct('[aiService] Explicit DEVELOPMENT MOCK MODE activated.');
+    const rawList = Array.isArray(images) ? images : [images];
+    const firstImg = rawList[0]?.data || rawList[0];
+    const localData = deconstructGarmentLocally(firstImg, options);
+    const canonical = normalizeSpecification(localData);
+    return {
+      success: true,
+      data: canonical,
+      specification: canonical,
+      observations: ['Generated via development mock mode'],
+      uncertainties: [],
+      questionsForUser: [],
+      sourceImages: ['img_local_01'],
+      requiresReview: false,
+    };
+  }
+
   return {
-    success: true,
-    data: canonical,
-    specification: canonical,
-    observations: [],
-    uncertainties: [],
-    questionsForUser: [],
-    sourceImages: ['img_local_01'],
-    requiresReview: false,
+    success: false,
+    status: 'error',
+    code: orchestratorResult.code || 'AI_ANALYSIS_FAILED',
+    error: orchestratorResult.message || 'Garment analysis could not be completed.',
+    message: orchestratorResult.message || 'Garment analysis could not be completed.',
+    retryable: Boolean(orchestratorResult.retryable),
   };
 }
 

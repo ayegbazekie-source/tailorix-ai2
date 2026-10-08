@@ -37,10 +37,10 @@ class AICache {
       .map((img) => {
         if (!img) return '';
         if (typeof img === 'string') {
-          // If data URI or base64, sample length and checksum endpoints
-          return `${img.length}_${img.slice(0, 32)}_${img.slice(-32)}`;
+          return `${img.length}_${img.slice(0, 48)}_${img.slice(-48)}`;
         }
-        return `${img.id || ''}_${img.role || ''}_${img.name || ''}_${(img.data || '').length}`;
+        const dataStr = typeof img.data === 'string' ? img.data : '';
+        return `${img.id || ''}_${img.role || ''}_${dataStr.length}_${dataStr.slice(0, 48)}_${dataStr.slice(-48)}`;
       })
       .join('|');
 

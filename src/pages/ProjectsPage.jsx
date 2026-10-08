@@ -1,15 +1,32 @@
 /**
  * TAILORIX AI — SAVED PROJECTS GALLERY
- * Access and manage user-saved parametric pattern drafts and CAD blueprints.
+ * Access and manage user-saved parametric pattern drafts, Deconstruct blueprints, and CAD cutouts.
  * Styled in dark graphite with champagne accents.
  */
 
 import React, { useState, useEffect } from 'react';
-import { Folder, Trash2, ExternalLink, Plus, Layers, Scissors, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Folder,
+  Trash2,
+  ExternalLink,
+  Plus,
+  Layers,
+  Scissors,
+  ArrowRight,
+  CheckCircle2,
+  Sparkles,
+  Lock,
+  Edit3,
+  Camera,
+  Eye,
+} from 'lucide-react';
+import { ACTIVE_DECONSTRUCT_KEY } from '../models/deconstructProject';
 
 export default function ProjectsPage() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
-  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'cut_outs' | 'blueprints'
+  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'deconstruct' | 'cut_outs' | 'blueprints'
 
   useEffect(() => {
     const saved = localStorage.getItem('tailorix_saved_projects');
@@ -28,14 +45,50 @@ export default function ProjectsPage() {
     localStorage.setItem('tailorix_saved_projects', JSON.stringify(updated));
   };
 
+  const isDeconstruct = (p) =>
+    Boolean(p.isDeconstructProject || p.category === 'Deconstruct Pattern' || p.patternBlueprint);
+
   const filteredProjects = projects.filter((p) => {
-    if (activeFilter === 'cut_outs') return p.isCutOut || p.category?.includes('Cut');
-    if (activeFilter === 'blueprints') return !p.isCutOut && !p.category?.includes('Cut');
+    if (activeFilter === 'deconstruct') return isDeconstruct(p);
+    if (activeFilter === 'cut_outs') return (p.isCutOut || p.category?.includes('Cut')) && !isDeconstruct(p);
+    if (activeFilter === 'blueprints') return !p.isCutOut && !p.category?.includes('Cut') && !isDeconstruct(p);
     return true;
   });
 
-  const cutOutCount = projects.filter((p) => p.isCutOut || p.category?.includes('Cut')).length;
-  const blueprintCount = projects.filter((p) => !p.isCutOut && !p.category?.includes('Cut')).length;
+  const deconstructCount = projects.filter(isDeconstruct).length;
+  const cutOutCount = projects.filter((p) => (p.isCutOut || p.category?.includes('Cut')) && !isDeconstruct(p)).length;
+  const blueprintCount = projects.filter((p) => !p.isCutOut && !p.category?.includes('Cut') && !isDeconstruct(p)).length;
+
+  const handleOpenInDraftingBoard = (proj) => {
+    try {
+      localStorage.setItem(ACTIVE_DECONSTRUCT_KEY, JSON.stringify(proj));
+    } catch (e) {}
+    navigate('/cad', { state: { deconstructProject: proj } });
+  };
+
+  const handleOpenOnCuttingTable = (proj) => {
+    const pieces = proj.patternPieces || proj.patternBlueprint?.pieces || proj.pieces || [];
+    const payload = {
+      source: 'deconstruct',
+      garmentType: proj.garmentTaxonomy?.garmentType || proj.garmentCategory || proj.category || 'trouser',
+      fabricCanvasUrl: proj.fabricName || 'selvedge_denim',
+      patternPieces: pieces.map((p, idx) => ({
+        id: p.id || `piece_${idx + 1}`,
+        name: p.name,
+        svgPath: p.outline || p.svgPath || p.path,
+        path: p.outline || p.svgPath || p.path,
+        cutQuantity: p.cutQuantity || 2,
+        cutQuantityLabel: p.cutQuantityLabel,
+        grainline: p.grainline,
+        bounds: p.bounds,
+        onFold: p.onFold,
+      })),
+    };
+    try {
+      localStorage.setItem('tailorix_studio_payload', JSON.stringify(payload));
+    } catch (e) {}
+    navigate('/studio', { state: { importedPayload: payload } });
+  };
 
   return (
     <div className="min-h-[calc(100vh-52px)] bg-[#101112] text-[#F5F5F7] p-4 sm:p-8 font-sans select-none">
@@ -51,31 +104,31 @@ export default function ProjectsPage() {
                 Saved Projects Gallery
               </h1>
               <p className="text-xs text-[#8A8B93] mt-0.5">
-                Review, manage, and re-export your saved pattern drafts and collective fabric cut-out bundles.
+                Review, manage, and import saved Deconstruct pattern blueprints, CAD slopers, and cut-out bundles.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
-            <a
-              href="/studio"
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-bold transition-all shadow-gold-sm"
+            <button
+              onClick={() => navigate('/deconstruct')}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-[#C5A059] hover:bg-[#D4AF37] text-slate-950 rounded-xl text-xs font-bold transition-all shadow-gold-sm"
             >
-              <Scissors className="w-3.5 h-3.5" />
-              <span>Cutting Table</span>
-            </a>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>New Deconstruct</span>
+            </button>
             <a
               href="/cad"
               className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-[#1A1B1E] hover:bg-[#222428] border border-[#2A2B2E] text-[#EDEDF0] hover:text-[#C5A059] rounded-xl text-xs font-semibold transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>New Draft</span>
+              <span>Blank CAD Draft</span>
             </a>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2 bg-[#141517] p-1 rounded-xl border border-[#222427] w-fit text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-2 bg-[#141517] p-1 rounded-xl border border-[#222427] w-fit text-xs font-semibold">
           <button
             onClick={() => setActiveFilter('all')}
             className={`px-3 py-1.5 rounded-lg transition-all ${
@@ -85,6 +138,17 @@ export default function ProjectsPage() {
             }`}
           >
             All Items ({projects.length})
+          </button>
+          <button
+            onClick={() => setActiveFilter('deconstruct')}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              activeFilter === 'deconstruct'
+                ? 'bg-[#C5A059]/20 border border-[#C5A059]/50 text-[#E5C07B] shadow-gold-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Sparkles className="w-3 h-3 text-[#C5A059]" />
+            <span>Deconstruct Blueprints ({deconstructCount})</span>
           </button>
           <button
             onClick={() => setActiveFilter('cut_outs')}
@@ -105,7 +169,7 @@ export default function ProjectsPage() {
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Pattern Blueprints ({blueprintCount})
+            Standard Slopers ({blueprintCount})
           </button>
         </div>
 
@@ -117,16 +181,16 @@ export default function ProjectsPage() {
             </div>
             <h3 className="text-sm font-semibold text-[#F5F5F7]">No Saved Items Found</h3>
             <p className="text-xs text-[#8A8B93] mt-1 max-w-sm">
-              Save pattern specifications directly from the Drafting Board or excise pieces with scissors on the Cutting Table to save them collectively here.
+              Save pattern specifications directly from Deconstruct, Drafting Board, or Cutting Table to manage them here.
             </p>
             <div className="flex items-center gap-3 mt-4">
-              <a
-                href="/studio"
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition-all shadow-gold-sm flex items-center gap-1.5"
+              <button
+                onClick={() => navigate('/deconstruct')}
+                className="px-4 py-2 bg-[#C5A059] hover:bg-[#D4AF37] text-slate-950 text-xs font-bold rounded-xl transition-all shadow-gold-sm flex items-center gap-1.5"
               >
-                <Scissors className="w-3.5 h-3.5" />
-                <span>Go to Cutting Table</span>
-              </a>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Deconstruct a Garment Photo</span>
+              </button>
               <a
                 href="/cad"
                 className="px-4 py-2 bg-[#1A1B1E] hover:bg-[#222428] border border-[#2A2B2E] text-[#EDEDF0] hover:text-[#C5A059] text-xs font-semibold rounded-xl transition-all"
@@ -136,27 +200,39 @@ export default function ProjectsPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredProjects.map((proj) => {
+              const isDecon = isDeconstruct(proj);
               const isCut = proj.isCutOut || proj.category?.includes('Cut');
+              const pieces = proj.patternPieces || proj.patternBlueprint?.pieces || proj.pieces || [];
+              const thumbImg = proj.sourceImages?.[0]?.data || null;
+
               return (
                 <div
                   key={proj.id}
                   className={`bg-[#141517] border p-5 rounded-2xl flex flex-col justify-between shadow-panel transition-all ${
-                    isCut ? 'border-amber-500/30 hover:border-amber-500/50' : 'border-[#222427] hover:border-[#383A40]'
+                    isDecon
+                      ? 'border-[#C5A059]/40 hover:border-[#C5A059]/80 shadow-[0_0_15px_rgba(197,160,89,0.08)]'
+                      : isCut
+                      ? 'border-amber-500/30 hover:border-amber-500/50'
+                      : 'border-[#222427] hover:border-[#383A40]'
                   }`}
                 >
                   <div>
+                    {/* Top badges */}
                     <div className="flex items-center justify-between mb-2">
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase border ${
-                          isCut
+                          isDecon
+                            ? 'bg-[#C5A059]/15 text-[#E5C07B] border-[#C5A059]/30 flex items-center gap-1'
+                            : isCut
                             ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 flex items-center gap-1'
                             : 'bg-[#C5A059]/10 text-[#E5C07B] border-[#C5A059]/20'
                         }`}
                       >
+                        {isDecon && <Sparkles className="w-2.5 h-2.5 text-[#C5A059]" />}
                         {isCut && <Scissors className="w-2.5 h-2.5" />}
-                        <span>{proj.category || (isCut ? 'Cut Fabric' : 'Garment')}</span>
+                        <span>{isDecon ? 'Deconstruct Pattern' : (proj.category || 'Garment')}</span>
                       </span>
                       <button
                         onClick={() => deleteProject(proj.id)}
@@ -167,15 +243,42 @@ export default function ProjectsPage() {
                       </button>
                     </div>
 
-                    <h3 className="text-sm font-semibold text-[#F5F5F7] mb-1">
+                    <h3 className="text-sm font-semibold text-[#F5F5F7] mb-1 truncate">
                       {proj.title || proj.name || 'Untitled Project'}
                     </h3>
                     <p className="text-[11px] text-[#8A8B93] mb-3 font-mono">
                       Saved: {proj.timestamp ? new Date(proj.timestamp).toLocaleDateString() : proj.date || 'Recent'}
                     </p>
 
-                    {/* Detailed information for Cut Fabric Bundles */}
-                    {isCut && proj.pieces && Array.isArray(proj.pieces) && (
+                    {/* Rich Metadata for Deconstruct Projects */}
+                    {isDecon && (
+                      <div className="mb-4 bg-[#101112] p-3 rounded-xl border border-[#222427] text-[11px] space-y-2">
+                        {thumbImg && (
+                          <div className="w-full h-24 bg-[#0C0D0E] rounded-lg overflow-hidden flex items-center justify-center border border-[#1E2024] mb-2">
+                            <img src={thumbImg} alt="Source" className="h-full w-auto object-contain" />
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between text-zinc-400">
+                          <span>Garment Taxonomy:</span>
+                          <span className="text-[#EDEDF0] font-semibold capitalize">
+                            {proj.garmentTaxonomy?.silhouette || ''} {proj.garmentTaxonomy?.garmentType || proj.garmentCategory || 'Trouser'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-zinc-400">
+                          <span>Blueprint Panels:</span>
+                          <span className="text-emerald-400 font-bold">{pieces.length} Distinct Pieces</span>
+                        </div>
+                        {proj.confidence && (
+                          <div className="flex items-center justify-between text-zinc-400">
+                            <span>Perception Confidence:</span>
+                            <span className="text-[#C5A059] font-mono font-bold">{Math.round(proj.confidence * 100)}%</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Information for Cut Fabric Bundles */}
+                    {isCut && pieces.length > 0 && (
                       <div className="mb-4 bg-[#101112] p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1.5">
                         <div className="flex items-center justify-between text-slate-400">
                           <span>Fabric Base:</span>
@@ -183,39 +286,58 @@ export default function ProjectsPage() {
                         </div>
                         <div className="flex items-center justify-between text-slate-400">
                           <span>Total Cut Parts:</span>
-                          <span className="text-amber-400 font-bold">{proj.piecesCount || proj.pieces.length} pieces</span>
-                        </div>
-                        <div className="pt-1 border-t border-slate-800/80 flex flex-wrap gap-1">
-                          {proj.pieces.map((pc, idx) => (
-                            <span
-                              key={idx}
-                              className="text-[9px] bg-slate-800/80 text-amber-300/90 px-1.5 py-0.5 rounded border border-slate-700/60"
-                            >
-                              {pc.name}
-                            </span>
-                          ))}
+                          <span className="text-amber-400 font-bold">{pieces.length} pieces</span>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {isCut ? (
-                    <a
-                      href="/studio"
-                      className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition-all shadow-gold-sm"
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                      <span>Open on Cutting Table</span>
-                    </a>
-                  ) : (
-                    <a
-                      href={`/deconstruct?project=${proj.id}`}
-                      className="flex items-center justify-center gap-2 w-full py-2 bg-[#18191C] hover:bg-[#202226] text-[#EDEDF0] hover:text-[#C5A059] rounded-xl text-xs font-semibold transition-all border border-[#26272B]"
-                    >
-                      <span>Open in Workbench</span>
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  )}
+                  {/* Action Buttons */}
+                  <div className="space-y-2 pt-2 border-t border-[#222427]">
+                    {isDecon ? (
+                      <>
+                        <button
+                          onClick={() => handleOpenInDraftingBoard(proj)}
+                          className="w-full py-2 bg-[#C5A059] hover:bg-[#D4AF37] text-slate-950 font-bold rounded-xl text-xs transition-all shadow-gold-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>Open in Drafting Board</span>
+                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => navigate(`/deconstruct?project=${proj.id}`)}
+                            className="py-1.5 bg-[#18191C] hover:bg-[#202226] text-zinc-300 hover:text-[#C5A059] rounded-xl text-[11px] font-semibold border border-[#28292D] flex items-center justify-center gap-1"
+                          >
+                            <Eye className="w-3 h-3 text-[#C5A059]" />
+                            <span>Review</span>
+                          </button>
+                          <button
+                            onClick={() => handleOpenOnCuttingTable(proj)}
+                            className="py-1.5 bg-[#18191C] hover:bg-[#202226] text-zinc-300 hover:text-amber-300 rounded-xl text-[11px] font-semibold border border-[#28292D] flex items-center justify-center gap-1"
+                          >
+                            <Scissors className="w-3 h-3 text-amber-400" />
+                            <span>Cut Table</span>
+                          </button>
+                        </div>
+                      </>
+                    ) : isCut ? (
+                      <button
+                        onClick={() => handleOpenOnCuttingTable(proj)}
+                        className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition-all shadow-gold-sm"
+                      >
+                        <Scissors className="w-3.5 h-3.5" />
+                        <span>Open on Cutting Table</span>
+                      </button>
+                    ) : (
+                      <a
+                        href={`/deconstruct?project=${proj.id}`}
+                        className="flex items-center justify-center gap-2 w-full py-2 bg-[#18191C] hover:bg-[#202226] text-[#EDEDF0] hover:text-[#C5A059] rounded-xl text-xs font-semibold transition-all border border-[#26272B]"
+                      >
+                        <span>Open in Workbench</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
                 </div>
               );
             })}

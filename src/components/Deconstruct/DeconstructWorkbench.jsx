@@ -304,6 +304,13 @@ export default function DeconstructWorkbench({ initialImage = null }) {
       const orchestratorResult = await aiOrchestrator.analyzeGarment(imgData, {
         garmentSpecification: garmentSpec,
       });
+
+      if (!orchestratorResult.success) {
+        console.error('AI Deconstruction Failed:', orchestratorResult);
+        alert(`AI Deconstruct Error: ${orchestratorResult.message || 'AI analysis could not be completed'}`);
+        return;
+      }
+
       const formattedResult = {
         success: orchestratorResult.success,
         data: orchestratorResult.data || orchestratorResult.specification,

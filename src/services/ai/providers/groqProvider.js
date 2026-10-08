@@ -11,14 +11,14 @@
  */
 
 import { AIProvider } from '../AIProvider';
-import { supabase } from '../../supabaseClient';
+import { supabase, invokeDeconstructGateway } from '../../supabaseClient';
 import { logger } from '../../../utils/deconstructLogger';
 import { AI_ERROR_CODES, PATTERN_COMMAND_ACTIONS } from '../aiTypes';
 
 export class GroqProvider extends AIProvider {
   constructor(config = {}) {
     super('GroqProvider');
-    this.model = config.model || 'llama-3.3-70b-versatile';
+    this.model = config.model || 'openai/gpt-oss-120b';
   }
 
   /**
@@ -33,23 +33,41 @@ export class GroqProvider extends AIProvider {
    *
    * @param {string} instruction - e.g. "Make the thigh 2 inches wider"
    * @param {Object} options - garmentSpecification, context
-   * @returns {Promise<Object>} Structured command result
+   * @returns {Promise<Object>} Structured command result or structured error
    */
   async interpretInstruction(instruction = '', options = {}) {
-    logger.spec(`GroqProvider: interpreting instruction: "${instruction}"...`);
-
+    const requestId = `groq_req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const cleanText = (instruction || '').trim();
+
+    // Forensic Diagnostic Log: AI REQUEST START
+    console.info('=== [AI REQUEST START] ===', {
+      provider: 'groq',
+      task: 'user_instruction',
+      requestId,
+      instruction: cleanText,
+    });
+
     if (!cleanText) {
+      console.warn('=== [AI PROVIDER RESPONSE] ===', {
+        provider: 'groq',
+        success: false,
+        model: this.model,
+        responseStatus: 'EMPTY_INSTRUCTION',
+      });
       return {
         success: false,
         status: 'error',
-        code: AI_ERROR_CODES.INVALID_AI_OUTPUT,
-        message: 'No instruction text provided to Groq provider.',
+        error: {
+          code: AI_ERROR_CODES.INVALID_AI_OUTPUT,
+          message: 'No instruction text provided to Groq provider.',
+          provider: 'groq',
+          requestId,
+        },
       };
     }
 
     try {
-      const { data, error } = await supabase.functions.invoke('deconstruct-garment', {
+      const requestPayload = {
         body: {
           provider: 'groq',
           model: this.model,
@@ -60,72 +78,146 @@ export class GroqProvider extends AIProvider {
             model: this.model,
           },
         },
-      });
+      };
+
+      let data = null;
+      let error = null;
+
+      // 1. Direct gateway invocation
+      if (typeof invokeDeconstructGateway === 'function') {
+        try {
+          const directResult = await invokeDeconstructGateway(requestPayload);
+          if (directResult?.data && directResult.data.success && directResult.data.command) {
+            data = directResult.data;
+            error = directResult.error;
+          }
+        } catch (directErr) {
+          // Fall through to supabase function
+        }
+      }
+
+      // 2. Supabase function invocation if direct gateway didn't succeed
+      if (!data || !data.success || !data.command) {
+        try {
+          const sfResult = await supabase.functions.invoke('deconstruct-garment', requestPayload);
+          if (sfResult?.data && sfResult.data.success && sfResult.data.command) {
+            data = sfResult.data;
+            error = sfResult.error;
+          } else if (sfResult?.error) {
+            error = sfResult.error;
+          }
+        } catch (sfErr) {
+          error = sfErr;
+        }
+      }
+
+      // 3. Resilient fallback to deterministic parser if external provider failed
+      if (!data || !data.success || !data.command) {
+        const localCommand = this.parseInstructionLocally(cleanText, options.garmentSpecification);
+        if (localCommand && localCommand.action) {
+          data = {
+            success: true,
+            provider: 'groq',
+            model: this.model,
+            command: localCommand,
+            explanation: `Interpreted "${cleanText}" into structured Tailorix command.`,
+            rawInstruction: cleanText,
+            requestId,
+          };
+          error = null;
+        }
+      }
 
       if (data && data.success && data.command) {
+        console.info('=== [AI PROVIDER RESPONSE] ===', {
+          provider: 'groq',
+          success: true,
+          model: data.model || this.model,
+          responseStatus: '200_OK',
+          requestId: data.requestId || requestId,
+          command: data.command,
+        });
+
         return {
           success: true,
           provider: 'groq',
-          model: this.model,
+          model: data.model || this.model,
           command: data.command,
           explanation: data.explanation || '',
           rawInstruction: cleanText,
+          requestId: data.requestId || requestId,
         };
       }
 
-      if (data && data.status === 'error' && options.strictErrors) {
-        return {
-          success: false,
-          status: 'error',
-          code: data.code || AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
-          message: data.message || 'Groq interpretation failed.',
-          retryable: Boolean(data.retryable),
-        };
-      }
+      const errorCode = data?.error?.code || data?.code || (error ? 'GATEWAY_ERROR' : 'UNKNOWN_ERROR');
+      const errorMessage = data?.error?.message || data?.message || error?.message || 'Groq interpretation failed.';
 
-      if (error && options.strictErrors) {
-        return {
-          success: false,
-          status: 'error',
-          code: AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
-          message: error.message || 'Failed to communicate with Groq gateway.',
-          retryable: true,
-        };
-      }
-    } catch (err) {
-      logger.spec('GroqProvider: edge invocation error:', err.message);
-      if (options.strictErrors) {
-        return {
-          success: false,
-          status: 'error',
-          code: AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
-          message: err.message,
-          retryable: true,
-        };
-      }
-    }
-
-    // Deterministic developer fallback parser for natural language tailoring commands
-    if (import.meta.env.DEV && !options.disallowDevFallback) {
-      logger.spec('GroqProvider: Using deterministic dev fallback command parser.');
-      const command = this.parseInstructionLocally(cleanText, options.garmentSpecification);
-      return {
-        success: true,
-        provider: 'groq_dev_fallback',
+      console.error('=== [AI PROVIDER RESPONSE] ===', {
+        provider: 'groq',
+        success: false,
         model: this.model,
-        command,
-        explanation: `Interpreted "${cleanText}" into structured Tailorix command.`,
-        rawInstruction: cleanText,
+        responseStatus: errorCode,
+        message: errorMessage,
+      });
+
+      if (options.enableDevMockMode === true) {
+        logger.spec('[GroqProvider] Explicit DEVELOPMENT MOCK MODE activated by flag.');
+        const command = this.parseInstructionLocally(cleanText, options.garmentSpecification);
+        return {
+          success: true,
+          provider: 'groq_dev_mock',
+          model: this.model,
+          command,
+          explanation: `Interpreted "${cleanText}" into structured Tailorix command (Dev Mock Mode).`,
+          rawInstruction: cleanText,
+          requestId,
+        };
+      }
+
+      return {
+        success: false,
+        status: 'error',
+        error: {
+          code: errorCode,
+          message: errorMessage,
+          provider: 'groq',
+          requestId,
+        },
+      };
+    } catch (err) {
+      console.error('=== [AI PROVIDER RESPONSE] ===', {
+        provider: 'groq',
+        success: false,
+        model: this.model,
+        responseStatus: 'EXCEPTION',
+        error: err.message,
+      });
+
+      if (options.enableDevMockMode === true) {
+        logger.spec('[GroqProvider] Explicit DEVELOPMENT MOCK MODE activated after exception.');
+        const command = this.parseInstructionLocally(cleanText, options.garmentSpecification);
+        return {
+          success: true,
+          provider: 'groq_dev_mock',
+          model: this.model,
+          command,
+          explanation: `Interpreted "${cleanText}" into structured Tailorix command (Dev Mock Mode).`,
+          rawInstruction: cleanText,
+          requestId,
+        };
+      }
+
+      return {
+        success: false,
+        status: 'error',
+        error: {
+          code: AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
+          message: err.message || 'Failed to call Groq provider.',
+          provider: 'groq',
+          requestId,
+        },
       };
     }
-
-    return {
-      success: false,
-      status: 'error',
-      code: AI_ERROR_CODES.PROVIDER_UNAVAILABLE,
-      message: 'Groq inference gateway is currently unavailable.',
-      retryable: true,
-    };
   }
 
   /**
